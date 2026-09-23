@@ -6,21 +6,32 @@ Doi tuong su dung: Ky thuat vien va nhan vien thiet ke bao bi mang ghep
 phuc hop (PET//PE, OPP//CPP) su dung cong nghe in ong dong truc khac
 dien tu.
 
-GIAI DOAN 1: Nen tang + Giao dien nhap lieu
----------------------------------------------
-O giai doan nay, ung dung tap trung vao viec:
+GIAI DOAN 1: Nen tang + Giao dien nhap lieu (DA HOAN THANH)
+-------------------------------------------------------------
     1. Cau hinh trang va giao dien (tong mau xanh duong, responsive).
     2. Xay dung form nhap lieu day du: loai tui, kich thuoc, thong tin
        bien doi, logo, va khoi cua so trong suot.
     3. Luu du lieu nhap vao st.session_state de cac giai doan sau
        (xu ly nghiep vu, preview, xuat PDF) su dung lai ma khong can
        nguoi dung nhap lai.
-    4. Hien thi bang tom tat du lieu da nhap de nguoi dung kiem tra
-       nhanh (chua co canh bao nghiep vu - se lam o Giai doan 2).
+    4. Hien thi bang tom tat du lieu da nhap de nguoi dung kiem tra.
+
+GIAI DOAN 2: Logic nghiep vu in ong dong (DA HOAN THANH)
+-------------------------------------------------------------
+    1. Khoa he mau chuan: CMYK 4 mau co ban + danh sach Pantone spot
+       color co dinh (khong cho nhap tay ma chon tu danh sach khoa
+       san - tranh sai lech mau khi khac truc).
+    2. Tu dong tinh kich thuoc co tran le (bleed +3mm moi canh).
+    3. Kiem tra ma vach chuan EAN-13 (du 13 so + dung checksum) va
+       kich thuoc toi thieu de ma vach doc duoc bang may quet.
+    4. Kiem tra vung an toan (safe margin 5mm tinh tu mep cat) - canh
+       bao neu kich thuoc tui qua nho hoac noi dung chu co the vuot
+       vung an toan (uoc tinh so bo, se chinh xac hoa o Giai doan 3
+       khi ve mockup that).
+    5. Kiem tra cua so trong suot co vuot kich thuoc tui hoac lan vao
+       vung an toan mep hay khong.
 
 Cac giai doan tiep theo (se bo sung sau):
-    - Giai doan 2: Logic nghiep vu in ong dong (bleed, canh bao EAN-13,
-      safe margin, overlap cua so trong suot).
     - Giai doan 3: Preview mockup truc quan bang Pillow.
     - Giai doan 4: Xuat file PDF ky thuat in an bang ReportLab.
 
@@ -78,6 +89,46 @@ KICH_THUOC_TOI_DA_MM: float = 2000.0
 # Dinh dang anh duoc chap nhan khi upload logo / anh mo phong san pham.
 DINH_DANG_ANH_HOP_LE: list[str] = ["png", "jpg", "jpeg"]
 
+# ===== HANG SO NGHIEP VU GIAI DOAN 2 =====
+
+# Do tran le (bleed) chuan cho in ong dong - cong them moi canh.
+BLEED_MM: float = 3.0
+
+# Vung an toan (safe margin) tinh tu duong cat thanh pham vao trong -
+# day la khoang cach toi thieu de chu/logo khong bi cat sat mep khi
+# dao dong dao cat trong qua trinh gia cong (chuan pho bien nganh bao
+# bi mang ghep: 5mm).
+SAFE_MARGIN_MM: float = 5.0
+
+# Kich thuoc vat ly toi thieu cua ma vach EAN-13 de may quet doc on
+# dinh (chuan GS1: kich thuoc goc 37.29 x 25.93 mm ở mức phong to
+# 100%; muc toi thieu cho phep la phong to 80% ~ 29.83 x 20.73 mm).
+EAN13_RONG_TOI_THIEU_MM: float = 29.83
+EAN13_CAO_TOI_THIEU_MM: float = 20.73
+
+# Bang mau CMYK tieu chuan (4 mau in ong dong co ban) - hien thi de
+# xac nhan he mau da bi khoa, khong cho nguoi dung tu y doi.
+BANG_MAU_CMYK_CHUAN: dict[str, str] = {
+    "Cyan (C)": "#00AEEF",
+    "Magenta (M)": "#EC008C",
+    "Yellow (Y)": "#FFF200",
+    "Key/Black (K)": "#101010",
+}
+
+# Danh sach mau Pantone spot color duoc phep chon them (ngoai 4 mau
+# CMYK co ban) - danh sach nay la "khoa cung", nguoi dung chi duoc
+# CHON tu day, khong duoc nhap ma Pantone tuy y de tranh sai lech mau
+# thuc te khi san xuat hang loat.
+DANH_SACH_PANTONE_KHOA: list[str] = [
+    "Không dùng thêm Pantone (chỉ CMYK)",
+    "Pantone 185 C (Đỏ tươi)",
+    "Pantone 286 C (Xanh dương đậm)",
+    "Pantone 355 C (Xanh lá)",
+    "Pantone 116 C (Vàng cam)",
+    "Pantone 877 C (Bạc ánh kim)",
+    "Pantone 871 C (Vàng ánh kim)",
+]
+
 
 # ---------------------------------------------------------------------------
 # CAU TRUC DU LIEU (DATA CLASS) LUU THONG TIN NHAP
@@ -128,9 +179,417 @@ class ThongTinThietKe:
     thanh_phan: str = ""
     ma_vach: str = ""
     logo: Optional[Image.Image] = None
+    mau_pantone: str = DANH_SACH_PANTONE_KHOA[0]
     cua_so_trong_suot: ThongTinCuaSoTrongSuot = field(
         default_factory=ThongTinCuaSoTrongSuot
     )
+
+
+# ---------------------------------------------------------------------------
+# LOGIC NGHIEP VU IN ONG DONG (GIAI DOAN 2)
+# ---------------------------------------------------------------------------
+#
+# Quy uoc chung cho cac ham kiem tra (kiem_tra_*) trong khoi nay:
+#   - Moi ham tra ve mot list cac tuple (muc_do, thong_diep), trong do
+#     muc_do thuoc {"loi", "canh_bao", "thanh_cong"}.
+#   - "loi": van de nghiem trong, co the gay hong khuon/truc khac -
+#     hien thi bang st.error() (mau do).
+#   - "canh_bao": can luu y, nen kiem tra lai truoc khi san xuat -
+#     hien thi bang st.warning() (mau vang).
+#   - "thanh_cong": da kiem tra va dat yeu cau - hien thi bang
+#     st.success() (mau xanh la).
+#   - List rong nghia la khong co gi de bao cao (truong hop khong ap
+#     dung, vi du chua bat cua so trong suot).
+
+
+@dataclass
+class KichThuocCoBleed:
+    """Ket qua tinh kich thuoc sau khi cong tran le (bleed).
+
+    Thuoc tinh:
+        dai_mm, rong_mm: Kich thuoc thanh pham goc (chua bleed).
+        hong_mm: Be hong goc.
+        dai_co_bleed_mm, rong_co_bleed_mm: Kich thuoc file thiet ke
+            thuc te (da cong bleed 2 canh doi dien).
+        hong_co_bleed_mm: Be hong sau khi cong bleed (chi cong neu
+            hong_mm > 0, vi mot so loai tui khong co panel hong).
+    """
+
+    dai_mm: float
+    rong_mm: float
+    hong_mm: float
+    dai_co_bleed_mm: float
+    rong_co_bleed_mm: float
+    hong_co_bleed_mm: float
+
+
+def tinh_kich_thuoc_co_bleed(
+    dai_mm: float, rong_mm: float, hong_mm: float, bleed_mm: float = BLEED_MM
+) -> KichThuocCoBleed:
+    """Tinh kich thuoc file thiet ke sau khi tu dong cong tran le.
+
+    Nguyen tac in ong dong: moi canh cat thanh pham deu can du mau
+    tran ra ngoai duong cat mot khoang bleed_mm, de khi dao cat lech
+    nhe trong qua trinh gia cong hang loat van khong lo nen trang.
+    Vi bleed duoc cong vao CA HAI canh doi dien cua mot chieu, cong
+    thuc la: kich_thuoc_moi = kich_thuoc_goc + 2 * bleed_mm.
+
+    Tham so:
+        dai_mm, rong_mm: Kich thuoc thanh pham nguoi dung nhap (mm).
+        hong_mm: Be hong (mm), co the bang 0 neu tui khong co hong.
+        bleed_mm: Do tran le moi canh (mm), mac dinh la BLEED_MM.
+
+    Tra ve:
+        Doi tuong KichThuocCoBleed chua ca kich thuoc goc va kich
+        thuoc da cong bleed.
+    """
+    dai_co_bleed = dai_mm + 2 * bleed_mm
+    rong_co_bleed = rong_mm + 2 * bleed_mm
+    # Be hong chi cong bleed neu > 0 (tui co panel hong that su),
+    # tui khong hong (hong_mm = 0) thi giu nguyen bang 0.
+    hong_co_bleed = (hong_mm + 2 * bleed_mm) if hong_mm > 0 else 0.0
+
+    return KichThuocCoBleed(
+        dai_mm=dai_mm,
+        rong_mm=rong_mm,
+        hong_mm=hong_mm,
+        dai_co_bleed_mm=dai_co_bleed,
+        rong_co_bleed_mm=rong_co_bleed,
+        hong_co_bleed_mm=hong_co_bleed,
+    )
+
+
+def _tinh_checksum_ean13(muoi_hai_so_dau: str) -> int:
+    """Tinh chu so kiem tra (checksum) chuan EAN-13.
+
+    Thuat toan chuan GS1: nhan cac chu so o vi tri le (tinh tu trai,
+    bat dau tu 1) voi he so 1, vi tri chan voi he so 3, cong tong lai,
+    lay 10 tru cho phan du cua tong khi chia 10 (neu ket qua la 10 thi
+    checksum = 0).
+
+    Tham so:
+        muoi_hai_so_dau: Chuoi gom dung 12 chu so dau cua ma EAN-13.
+
+    Tra ve:
+        Chu so kiem tra (0-9) duoc tinh toan.
+    """
+    tong = 0
+    for vi_tri, ky_tu in enumerate(muoi_hai_so_dau):
+        chu_so = int(ky_tu)
+        # Vi tri trong code (0-based): chan (0,2,4..) la vi tri LE
+        # theo cach dem 1-based cua chuan GS1 -> he so 1.
+        he_so = 1 if vi_tri % 2 == 0 else 3
+        tong += chu_so * he_so
+    phan_du = tong % 10
+    return 0 if phan_du == 0 else 10 - phan_du
+
+
+def kiem_tra_dinh_dang_ma_vach(ma_vach: str) -> list[tuple[str, str]]:
+    """Kiem tra ma vach nguoi dung nhap co dung chuan EAN-13 khong.
+
+    Cac dieu kien kiem tra:
+        1. Chuoi phai gom dung 13 ky tu, toan bo la chu so.
+        2. Chu so kiem tra (ky tu cuoi) phai khop voi checksum tinh
+           tu 12 chu so dau theo thuat toan GS1.
+
+    Neu nguoi dung de trong o ma vach (chua co ma, bo sung sau), ham
+    tra ve list rong - khong coi la loi, vi day la truong du lieu
+    khong bat buoc o buoc thiet ke so bo.
+
+    Tham so:
+        ma_vach: Chuoi ma vach nguoi dung da nhap.
+
+    Tra ve:
+        List (muc_do, thong_diep) mo ta ket qua kiem tra.
+    """
+    ma_vach = ma_vach.strip()
+    if not ma_vach:
+        return []
+
+    if not ma_vach.isdigit():
+        return [
+            (
+                "loi",
+                "Mã vạch chứa ký tự không phải số. Mã EAN-13 chỉ được "
+                "gồm các chữ số 0-9.",
+            )
+        ]
+
+    if len(ma_vach) != 13:
+        return [
+            (
+                "loi",
+                f"Mã vạch hiện có {len(ma_vach)} chữ số, chuẩn EAN-13 "
+                "yêu cầu đúng 13 chữ số.",
+            )
+        ]
+
+    checksum_dung = _tinh_checksum_ean13(ma_vach[:12])
+    checksum_nhap = int(ma_vach[12])
+
+    if checksum_dung != checksum_nhap:
+        return [
+            (
+                "loi",
+                f"Chữ số kiểm tra (checksum) không hợp lệ - theo chuẩn "
+                f"GS1, chữ số cuối phải là {checksum_dung}, hiện đang "
+                f"là {checksum_nhap}. Vui lòng kiểm tra lại mã vạch.",
+            )
+        ]
+
+    return [("thanh_cong", "Mã vạch đúng chuẩn EAN-13 (đã kiểm tra checksum).")]
+
+
+def kiem_tra_kich_thuoc_ma_vach(
+    ma_vach: str, rong_mm: float, dai_mm: float
+) -> list[tuple[str, str]]:
+    """Kiem tra tui co du kich thuoc de dat ma vach chuan hay khong.
+
+    Ma vach EAN-13 can mot vung khong gian toi thieu de may quet doc
+    duoc chinh xac. Ham nay chi canh bao so bo dua tren kich thuoc
+    tong the cua tui (chua tinh vi tri dat cu the - vi tri chinh xac
+    se duoc bo tri khi dan thiet ke that o Giai doan 3).
+
+    Tham so:
+        ma_vach: Chuoi ma vach (dung de xac dinh co can kiem tra hay
+            khong - neu chua nhap ma vach thi bo qua kiem tra nay).
+        rong_mm, dai_mm: Kich thuoc thanh pham (mm).
+
+    Tra ve:
+        List (muc_do, thong_diep) mo ta ket qua kiem tra.
+    """
+    if not ma_vach.strip():
+        return []
+
+    if rong_mm < EAN13_RONG_TOI_THIEU_MM or dai_mm < EAN13_CAO_TOI_THIEU_MM:
+        return [
+            (
+                "canh_bao",
+                f"Kích thước túi ({rong_mm:.0f}×{dai_mm:.0f} mm) khá nhỏ "
+                f"so với vùng tối thiểu để đặt mã vạch EAN-13 đúng chuẩn "
+                f"({EAN13_RONG_TOI_THIEU_MM:.1f}×{EAN13_CAO_TOI_THIEU_MM:.1f} mm "
+                "ở mức phóng to 100%). Có thể cần thu nhỏ mã vạch xuống "
+                "80% hoặc cân nhắc lại vị trí đặt.",
+            )
+        ]
+    return [("thanh_cong", "Kích thước túi đủ để đặt mã vạch EAN-13 chuẩn.")]
+
+
+def kiem_tra_an_toan_le(thong_tin: "ThongTinThietKe") -> list[tuple[str, str]]:
+    """Kiem tra so bo nguy co noi dung vi pham vung an toan (safe margin).
+
+    Day la buoc kiem tra so bo (heuristic) dua tren kich thuoc tui va
+    do dai van ban nhap vao - CHUA phai la kiem tra chinh xac theo
+    layout that (viec do se duoc thuc hien khi ve mockup that bang
+    Pillow o Giai doan 3). Muc dich la canh bao som cho ky thuat vien
+    truoc khi sang buoc dan thiet ke chi tiet.
+
+    Logic kiem tra:
+        1. Tui phai du lon de chua vung an toan o ca 2 chieu (chieu
+           rong va chieu dai phai > 2 * SAFE_MARGIN_MM), neu khong se
+           khong con cho nao de dat noi dung an toan -> loi.
+        2. Uoc tinh chieu rong noi dung kha dung (da tru 2 ben safe
+           margin), so sanh voi do dai chuoi ten san pham/slogan nhan
+           voi be rong ky tu trung binh uoc luong -> canh bao neu co
+           kha nang vuot qua.
+
+    Tham so:
+        thong_tin: Doi tuong ThongTinThietKe hien tai.
+
+    Tra ve:
+        List (muc_do, thong_diep) mo ta ket qua kiem tra.
+    """
+    ket_qua: list[tuple[str, str]] = []
+    rong = thong_tin.rong_mm
+    dai = thong_tin.dai_mm
+
+    if rong <= 0 or dai <= 0:
+        # Chua nhap kich thuoc - khong co gi de kiem tra.
+        return ket_qua
+
+    if rong <= 2 * SAFE_MARGIN_MM or dai <= 2 * SAFE_MARGIN_MM:
+        ket_qua.append(
+            (
+                "loi",
+                f"Kích thước túi ({rong:.0f}×{dai:.0f} mm) quá nhỏ so với "
+                f"vùng an toàn tiêu chuẩn ({SAFE_MARGIN_MM:.0f}mm mỗi cạnh) "
+                "- không còn đủ chỗ để đặt nội dung an toàn cách xa mép cắt.",
+            )
+        )
+        return ket_qua
+
+    # Uoc tinh be rong noi dung kha dung sau khi tru safe margin 2 ben.
+    rong_kha_dung_mm = rong - 2 * SAFE_MARGIN_MM
+
+    # He so uoc luong be rong trung binh cua 1 ky tu in hoa co chu lon
+    # (ten san pham, don vi mm/ky tu) - day la uoc luong so bo, khong
+    # thay the cho viec do dac chinh xac tren mockup that.
+    BE_RONG_KY_TU_TEN_SP_MM = 5.5
+    if thong_tin.ten_san_pham:
+        do_rong_uoc_tinh = len(thong_tin.ten_san_pham) * BE_RONG_KY_TU_TEN_SP_MM
+        if do_rong_uoc_tinh > rong_kha_dung_mm:
+            ket_qua.append(
+                (
+                    "canh_bao",
+                    f"Tên sản phẩm \"{thong_tin.ten_san_pham}\" khá dài so "
+                    f"với bề rộng khả dụng (~{rong_kha_dung_mm:.0f} mm) sau "
+                    "khi trừ vùng an toàn. Có thể cần giảm cỡ chữ hoặc rút "
+                    "gọn tên khi dàn thiết kế thật.",
+                )
+            )
+
+    # He so uoc luong be rong trung binh cho slogan (chu nho hon).
+    BE_RONG_KY_TU_SLOGAN_MM = 2.5
+    if thong_tin.slogan:
+        # Uoc tinh tren dong dai nhat cua slogan (tach theo dau xuong dong).
+        dong_dai_nhat = max(
+            (len(dong) for dong in thong_tin.slogan.splitlines()),
+            default=len(thong_tin.slogan),
+        )
+        do_rong_uoc_tinh = dong_dai_nhat * BE_RONG_KY_TU_SLOGAN_MM
+        if do_rong_uoc_tinh > rong_kha_dung_mm:
+            ket_qua.append(
+                (
+                    "canh_bao",
+                    "Slogan/mô tả có dòng khá dài, có thể cần xuống dòng "
+                    "hoặc giảm cỡ chữ để không phạm vùng an toàn khi dàn "
+                    "thiết kế thật.",
+                )
+            )
+
+    if not ket_qua:
+        ket_qua.append(
+            ("thanh_cong", "Chưa phát hiện nguy cơ vi phạm vùng an toàn (ước tính sơ bộ).")
+        )
+
+    return ket_qua
+
+
+def kiem_tra_cua_so_trong_suot(
+    thong_tin: "ThongTinThietKe",
+) -> list[tuple[str, str]]:
+    """Kiem tra cau hinh cua so trong suot co hop ly khong.
+
+    Kiem tra 2 nhom van de:
+        1. Cua so co vuot qua kich thuoc tong the cua tui khong.
+        2. Cua so co lan vao vung an toan mep (SAFE_MARGIN_MM) khong,
+           dua tren vi tri uoc tinh theo lua chon cua nguoi dung.
+
+    Tham so:
+        thong_tin: Doi tuong ThongTinThietKe hien tai.
+
+    Tra ve:
+        List (muc_do, thong_diep) mo ta ket qua kiem tra.
+    """
+    cua_so = thong_tin.cua_so_trong_suot
+    if not cua_so.co_cua_so:
+        return []
+
+    rong_tui = thong_tin.rong_mm
+    dai_tui = thong_tin.dai_mm
+
+    if rong_tui <= 0 or dai_tui <= 0:
+        return [
+            (
+                "canh_bao",
+                "Chưa nhập kích thước túi nên chưa thể kiểm tra vị trí "
+                "cửa sổ trong suốt.",
+            )
+        ]
+
+    # Truong hop dac biet: cua so phu toan bo mat sau -> khong can
+    # kiem tra overlap chi tiet, chi can bao thanh cong dac biet.
+    if cua_so.vi_tri == "Toàn bộ mặt sau":
+        return [
+            (
+                "thanh_cong",
+                "Cửa sổ trong suốt phủ toàn bộ mặt sau - đã ghi nhận, "
+                "không cần kiểm tra chồng lấn vùng an toàn riêng lẻ.",
+            )
+        ]
+
+    # 1) Kiem tra cua so co vuot kich thuoc tui khong.
+    ket_qua: list[tuple[str, str]] = []
+    if cua_so.rong_mm > rong_tui or cua_so.cao_mm > dai_tui:
+        ket_qua.append(
+            (
+                "loi",
+                f"Kích thước cửa sổ trong suốt ({cua_so.rong_mm:.0f}×"
+                f"{cua_so.cao_mm:.0f} mm) lớn hơn kích thước túi "
+                f"({rong_tui:.0f}×{dai_tui:.0f} mm) - vui lòng chỉnh lại.",
+            )
+        )
+        return ket_qua
+
+    # 2) Uoc tinh toa do goc tren-trai (x0, y0) cua cua so dua theo
+    # vi tri nguoi dung chon, de kiem tra co lan vung an toan khong.
+    if cua_so.vi_tri == "Giữa mặt trước":
+        x0 = (rong_tui - cua_so.rong_mm) / 2
+        y0 = (dai_tui - cua_so.cao_mm) / 2
+    elif cua_so.vi_tri == "Trên mặt trước":
+        x0 = (rong_tui - cua_so.rong_mm) / 2
+        y0 = 0.0
+    elif cua_so.vi_tri == "Dưới mặt trước":
+        x0 = (rong_tui - cua_so.rong_mm) / 2
+        y0 = dai_tui - cua_so.cao_mm
+    else:  # "Tùy chỉnh tọa độ (X, Y)"
+        x0 = cua_so.toa_do_x
+        y0 = cua_so.toa_do_y
+
+    x1 = x0 + cua_so.rong_mm
+    y1 = y0 + cua_so.cao_mm
+
+    vi_pham_an_toan = (
+        x0 < SAFE_MARGIN_MM
+        or y0 < SAFE_MARGIN_MM
+        or x1 > (rong_tui - SAFE_MARGIN_MM)
+        or y1 > (dai_tui - SAFE_MARGIN_MM)
+    )
+
+    if vi_pham_an_toan:
+        ket_qua.append(
+            (
+                "canh_bao",
+                f"Cửa sổ trong suốt ở vị trí \"{cua_so.vi_tri}\" có thể "
+                f"chạm hoặc vượt vùng an toàn {SAFE_MARGIN_MM:.0f}mm cách "
+                "mép cắt. Nên chừa thêm khoảng cách hoặc thu nhỏ cửa sổ.",
+            )
+        )
+    else:
+        ket_qua.append(
+            (
+                "thanh_cong",
+                "Vị trí và kích thước cửa sổ trong suốt nằm trong vùng an "
+                "toàn (ước tính sơ bộ theo tọa độ đã chọn).",
+            )
+        )
+
+    return ket_qua
+
+
+def tong_hop_ket_qua_kiem_tra(
+    thong_tin: "ThongTinThietKe",
+) -> dict[str, list[tuple[str, str]]]:
+    """Chay toan bo cac ham kiem tra nghiep vu va gom nhom ket qua.
+
+    Day la ham "dieu phoi" (orchestrator) duy nhat ma tang giao dien
+    (UI) can goi - giup tach biet ro rang logic nghiep vu (co the unit
+    test doc lap) khoi phan hien thi.
+
+    Tham so:
+        thong_tin: Doi tuong ThongTinThietKe hien tai.
+
+    Tra ve:
+        Dict anh xa ten nhom kiem tra -> list (muc_do, thong_diep).
+    """
+    return {
+        "Mã vạch EAN-13 (định dạng)": kiem_tra_dinh_dang_ma_vach(thong_tin.ma_vach),
+        "Mã vạch EAN-13 (kích thước)": kiem_tra_kich_thuoc_ma_vach(
+            thong_tin.ma_vach, thong_tin.rong_mm, thong_tin.dai_mm
+        ),
+        "Vùng an toàn (Safe Margin)": kiem_tra_an_toan_le(thong_tin),
+        "Cửa sổ trong suốt": kiem_tra_cua_so_trong_suot(thong_tin),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +908,48 @@ def _render_khoi_cua_so_trong_suot() -> ThongTinCuaSoTrongSuot:
     return thong_tin
 
 
+def _render_khoi_he_mau() -> str:
+    """Hien thi khoi thong tin he mau in - da khoa chuan CMYK.
+
+    Theo yeu cau nghiep vu, he mau CMYK 4 mau co ban LUON duoc ap
+    dung mac dinh cho moi thiet ke va KHONG the tat/doi (chi hien thi
+    de xac nhan). Nguoi dung chi duoc phep CHON THEM (khong bat buoc)
+    mot mau Pantone spot color tu danh sach co dinh DANH_SACH_PANTONE_
+    KHOA - khong co o nhap tu do, tranh sai lech ma mau khi san xuat.
+
+    Tra ve:
+        Ten mau Pantone da chon (hoac gia tri mac dinh "Không dùng
+        thêm Pantone" neu khong chon).
+    """
+    st.caption(
+        "Hệ màu xử lý (CMYK) — áp dụng cố định cho mọi thiết kế, "
+        "không thể chỉnh sửa:"
+    )
+    cot_mau = st.columns(4)
+    for cot, (ten_mau, ma_hex) in zip(cot_mau, BANG_MAU_CMYK_CHUAN.items()):
+        with cot:
+            st.markdown(
+                f"""
+                <div style="text-align:center; margin-bottom: 0.5rem;">
+                    <div style="background-color:{ma_hex}; height:36px;
+                        border-radius:6px; border:1px solid #e5e7eb;"></div>
+                    <div style="font-size:0.8rem; color:#374151;
+                        margin-top:4px;">{ten_mau}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    mau_pantone = st.selectbox(
+        "Chọn thêm màu Pantone chuyên dụng (tùy chọn)",
+        options=DANH_SACH_PANTONE_KHOA,
+        help="Chỉ được chọn từ danh sách Pantone đã khóa sẵn theo "
+        "chuẩn nhà máy, không nhập mã tự do để tránh sai lệch màu "
+        "thực tế khi khắc trục.",
+    )
+    return mau_pantone
+
+
 def render_form_nhap_lieu() -> Optional[ThongTinThietKe]:
     """Hien thi toan bo form nhap lieu chinh cua ung dung.
 
@@ -484,7 +985,10 @@ def render_form_nhap_lieu() -> Optional[ThongTinThietKe]:
             key="upload_logo",
         )
 
-        st.subheader("5️⃣ Cửa sổ trong suốt")
+        st.subheader("5️⃣ Hệ màu in (đã khóa chuẩn)")
+        mau_pantone = _render_khoi_he_mau()
+
+        st.subheader("6️⃣ Cửa sổ trong suốt")
         cua_so_trong_suot = _render_khoi_cua_so_trong_suot()
 
         da_gui = st.form_submit_button("✅ Lưu thông tin thiết kế")
@@ -505,6 +1009,7 @@ def render_form_nhap_lieu() -> Optional[ThongTinThietKe]:
         thanh_phan=thanh_phan.strip(),
         ma_vach=ma_vach.strip(),
         logo=logo,
+        mau_pantone=mau_pantone,
         cua_so_trong_suot=cua_so_trong_suot,
     )
     return thong_tin_thiet_ke
@@ -575,6 +1080,8 @@ def hien_thi_tom_tat(thong_tin: ThongTinThietKe) -> None:
         else:
             _hien_thi_the_tom_tat("Cửa sổ trong suốt", "Không sử dụng")
 
+        _hien_thi_the_tom_tat("Hệ màu", f"CMYK 4 màu + {thong_tin.mau_pantone}")
+
     # Hien thi anh preview logo va anh mo phong (neu co) de nguoi dung
     # xac nhan da upload dung file.
     if thong_tin.logo is not None or (
@@ -593,11 +1100,97 @@ def hien_thi_tom_tat(thong_tin: ThongTinThietKe) -> None:
                     width=200,
                 )
 
-    st.info(
-        "ℹ️ Đây là bước tóm tắt dữ liệu (Giai đoạn 1). Các cảnh báo kỹ "
-        "thuật (mã vạch EAN-13, vùng an toàn chữ, tràn lề, cửa sổ trong "
-        "suốt chồng lấn...) sẽ được xử lý ở Giai đoạn 2."
+
+def hien_thi_kich_thuoc_bleed(thong_tin: "ThongTinThietKe") -> None:
+    """Hien thi bang so sanh kich thuoc goc va kich thuoc da cong bleed.
+
+    Tham so:
+        thong_tin: Doi tuong ThongTinThietKe hien tai.
+    """
+    if thong_tin.dai_mm <= 0 or thong_tin.rong_mm <= 0:
+        st.warning(
+            "⚠️ Chưa nhập đủ kích thước Dài/Rộng nên chưa thể tính toán "
+            "kích thước tràn lề (bleed)."
+        )
+        return
+
+    ket_qua_bleed = tinh_kich_thuoc_co_bleed(
+        thong_tin.dai_mm, thong_tin.rong_mm, thong_tin.hong_mm
     )
+
+    cot_goc, cot_bleed = st.columns(2)
+    with cot_goc:
+        _hien_thi_the_tom_tat(
+            "Kích thước thành phẩm (chưa bleed)",
+            f"{ket_qua_bleed.dai_mm:.0f} × {ket_qua_bleed.rong_mm:.0f} mm"
+            + (
+                f" × {ket_qua_bleed.hong_mm:.0f} mm hông"
+                if ket_qua_bleed.hong_mm > 0
+                else ""
+            ),
+        )
+    with cot_bleed:
+        _hien_thi_the_tom_tat(
+            f"Kích thước file thiết kế (đã +{BLEED_MM:.0f}mm bleed mỗi cạnh)",
+            f"{ket_qua_bleed.dai_co_bleed_mm:.0f} × "
+            f"{ket_qua_bleed.rong_co_bleed_mm:.0f} mm"
+            + (
+                f" × {ket_qua_bleed.hong_co_bleed_mm:.0f} mm hông"
+                if ket_qua_bleed.hong_co_bleed_mm > 0
+                else ""
+            ),
+        )
+
+
+def hien_thi_ket_qua_kiem_tra(thong_tin: "ThongTinThietKe") -> None:
+    """Hien thi toan bo ket qua kiem tra nghiep vu (Giai doan 2).
+
+    Goi ham tong_hop_ket_qua_kiem_tra() de lay ket qua, sau do render
+    tung nhom bang mau sac tuong ung: do (loi), vang (canh bao), xanh
+    la (thanh cong).
+
+    Tham so:
+        thong_tin: Doi tuong ThongTinThietKe hien tai.
+    """
+    st.subheader("🛠️ Kết quả kiểm tra kỹ thuật in ống đồng")
+
+    hien_thi_kich_thuoc_bleed(thong_tin)
+
+    st.markdown("**Chi tiết kiểm tra từng hạng mục:**")
+    ket_qua_theo_nhom = tong_hop_ket_qua_kiem_tra(thong_tin)
+
+    co_loi_nghiem_trong = False
+    tat_ca_trong = True
+
+    for ten_nhom, danh_sach_ket_qua in ket_qua_theo_nhom.items():
+        if not danh_sach_ket_qua:
+            continue
+        tat_ca_trong = False
+        with st.expander(f"📌 {ten_nhom}", expanded=True):
+            for muc_do, thong_diep in danh_sach_ket_qua:
+                if muc_do == "loi":
+                    st.error(thong_diep)
+                    co_loi_nghiem_trong = True
+                elif muc_do == "canh_bao":
+                    st.warning(thong_diep)
+                else:
+                    st.success(thong_diep)
+
+    if tat_ca_trong:
+        st.info(
+            "ℹ️ Chưa có đủ dữ liệu (mã vạch, kích thước...) để chạy kiểm "
+            "tra chi tiết. Hãy nhập đầy đủ thông tin ở form phía trên."
+        )
+    elif co_loi_nghiem_trong:
+        st.error(
+            "🚫 Phát hiện lỗi kỹ thuật nghiêm trọng - vui lòng chỉnh sửa "
+            "trước khi chuyển sang bước khắc trục ống đồng."
+        )
+    else:
+        st.success(
+            "✅ Không phát hiện lỗi nghiêm trọng nào. Vui lòng vẫn xem "
+            "kỹ các cảnh báo (nếu có) trước khi sản xuất hàng loạt."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +1229,8 @@ def main() -> None:
     if thong_tin_hien_tai is not None:
         st.divider()
         hien_thi_tom_tat(thong_tin_hien_tai)
+        st.divider()
+        hien_thi_ket_qua_kiem_tra(thong_tin_hien_tai)
 
 
 if __name__ == "__main__":
