@@ -31,8 +31,21 @@ GIAI DOAN 2: Logic nghiep vu in ong dong (DA HOAN THANH)
     5. Kiem tra cua so trong suot co vuot kich thuoc tui hoac lan vao
        vung an toan mep hay khong.
 
+GIAI DOAN 3: Preview mockup truc quan bang Pillow (DA HOAN THANH)
+-------------------------------------------------------------
+    1. Ve khung tui theo dung ty le kich thuoc that (co tran le), tu
+       dong scale de vua hien thi tren man hinh.
+    2. Ve duong bleed (net dut do, o mep canvas) va duong safe margin
+       (net dut vang, cach mep cat SAFE_MARGIN_MM) - dung chung mot
+       he toa do voi logic kiem tra o Giai doan 2.
+    3. Ghep logo (neu co) va ve ten san pham/slogan len dung vi tri
+       trong vung an toan.
+    4. Ve vung cua so trong suot dung vi tri/kich thuoc/hinh dang da
+       chon o form - ghep anh mo phong san pham (neu co) qua mask
+       theo hinh dang, hoac to nen xanh nhat mo phong kinh trong neu
+       chua co anh.
+
 Cac giai doan tiep theo (se bo sung sau):
-    - Giai doan 3: Preview mockup truc quan bang Pillow.
     - Giai doan 4: Xuat file PDF ky thuat in an bang ReportLab.
 
 Thu vien su dung: streamlit, pillow (PIL), reportlab.
@@ -43,11 +56,12 @@ Streamlit Community Cloud.
 from __future__ import annotations
 
 import io
+import textwrap
 from dataclasses import dataclass, field
 from typing import Optional
 
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 # ---------------------------------------------------------------------------
 # HANG SO CAU HINH NGHIEP VU
@@ -567,6 +581,50 @@ def kiem_tra_cua_so_trong_suot(
     return ket_qua
 
 
+def tinh_toa_do_goc_cua_so_mm(
+    cua_so: "ThongTinCuaSoTrongSuot", rong_tui: float, dai_tui: float
+) -> Optional[tuple[float, float, float, float]]:
+    """Tinh toa do (x0, y0, x1, y1) cua vung cua so trong suot, don vi mm.
+
+    Day la ham DUY NHAT tinh toa do goc cua so - dung chung boi ca
+    ham kiem tra nghiep vu (kiem_tra_cua_so_trong_suot) lan ham ve
+    mockup (Giai doan 3), de dam bao vi tri hien thi tren preview
+    luon khop 100% voi vi tri da duoc kiem tra canh bao an toan.
+
+    Goc toa do (0, 0) la goc tren-trai cua mat tui (KHONG tinh bleed).
+
+    Tham so:
+        cua_so: Cau hinh cua so trong suot nguoi dung da nhap.
+        rong_tui, dai_tui: Kich thuoc thanh pham cua tui (mm).
+
+    Tra ve:
+        Tuple (x0, y0, x1, y1) mm, hoac None neu vi tri la "Toàn bộ
+        mặt sau" (khong ap dung toa do mat truoc) hoac chua du du lieu
+        de tinh (kich thuoc tui <= 0).
+    """
+    if rong_tui <= 0 or dai_tui <= 0:
+        return None
+    if cua_so.vi_tri == "Toàn bộ mặt sau":
+        return None
+
+    if cua_so.vi_tri == "Giữa mặt trước":
+        x0 = (rong_tui - cua_so.rong_mm) / 2
+        y0 = (dai_tui - cua_so.cao_mm) / 2
+    elif cua_so.vi_tri == "Trên mặt trước":
+        x0 = (rong_tui - cua_so.rong_mm) / 2
+        y0 = 0.0
+    elif cua_so.vi_tri == "Dưới mặt trước":
+        x0 = (rong_tui - cua_so.rong_mm) / 2
+        y0 = dai_tui - cua_so.cao_mm
+    else:  # "Tùy chỉnh tọa độ (X, Y)"
+        x0 = cua_so.toa_do_x
+        y0 = cua_so.toa_do_y
+
+    x1 = x0 + cua_so.rong_mm
+    y1 = y0 + cua_so.cao_mm
+    return (x0, y0, x1, y1)
+
+
 def tong_hop_ket_qua_kiem_tra(
     thong_tin: "ThongTinThietKe",
 ) -> dict[str, list[tuple[str, str]]]:
@@ -590,6 +648,407 @@ def tong_hop_ket_qua_kiem_tra(
         "Vùng an toàn (Safe Margin)": kiem_tra_an_toan_le(thong_tin),
         "Cửa sổ trong suốt": kiem_tra_cua_so_trong_suot(thong_tin),
     }
+
+
+# ---------------------------------------------------------------------------
+# VE MOCKUP TRUC QUAN BANG PILLOW (GIAI DOAN 3)
+# ---------------------------------------------------------------------------
+#
+# Nguyen tac chung cua khoi nay:
+#   - Toan bo phep ve deu lam viec tren mot he toa do px duy nhat, quy
+#     doi tu mm sang px bang mot ty le SCALE co dinh cho ca lan ve
+#     (tinh boi _tinh_ty_le_px_tren_mm). Nho vay moi thanh phan (bleed,
+#     safe margin, logo, chu, cua so...) deu dong bo ty le voi nhau.
+#   - Canvas anh preview co KICH THUOC BANG DUNG kich thuoc file thiet
+#     ke thuc te (thanh pham + bleed 2 ben), tuc la mep ngoai cung cua
+#     anh chinh la duong bleed - giong quy uoc nganh in thuc te.
+
+# Kich thuoc toi da (px) cua canh dai nhat tren anh preview - gioi han
+# de anh khong qua nang, nhung van du net de xem tren web.
+DO_DAI_CANH_LON_NHAT_PREVIEW_PX: int = 760
+
+# Mau sac dung trong mockup (dong bo tong xanh duong cua giao dien).
+MAU_NEN_TUI_MOCKUP: tuple[int, int, int] = (255, 255, 255)
+MAU_DUONG_BLEED: tuple[int, int, int] = (220, 38, 38)  # do
+MAU_DUONG_SAFE_MARGIN: tuple[int, int, int] = (217, 119, 6)  # vang cam
+MAU_VIEN_THANH_PHAM: tuple[int, int, int] = (30, 58, 138)  # xanh duong dam
+MAU_NEN_CUA_SO_TRONG: tuple[int, int, int, int] = (191, 219, 254, 175)  # xanh nhat, co alpha
+MAU_VIEN_CUA_SO: tuple[int, int, int] = (37, 99, 235)
+MAU_CHU_TEN_SAN_PHAM: tuple[int, int, int] = (17, 24, 39)
+MAU_CHU_SLOGAN: tuple[int, int, int] = (55, 65, 81)
+
+# Do dai net dut (px) dung chung cho duong bleed va safe margin.
+DO_DAI_NET_DUT_PX: int = 6
+KHOANG_CACH_NET_DUT_PX: int = 5
+
+
+def _lay_font(kich_thuoc_px: int, dam: bool = False) -> ImageFont.FreeTypeFont:
+    """Tra ve mot font TrueType voi kich thuoc mong muon.
+
+    Thu lan luot mot vai duong dan font pho bien tren cac moi truong
+    Linux (bao gom Streamlit Community Cloud) va tren may nguoi dung.
+    Neu khong tim thay font TrueType nao, roi ve font mac dinh cua
+    Pillow (bitmap) de ung dung khong bi crash, chi giam nhe chat
+    luong hien thi chu.
+
+    Tham so:
+        kich_thuoc_px: Kich thuoc chu mong muon, tinh bang px.
+        dam: True neu can chu dam (bold), vi du cho ten san pham.
+
+    Tra ve:
+        Doi tuong font co the dung truc tiep voi ImageDraw.text().
+    """
+    ten_file_uu_tien = (
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "DejaVuSans-Bold.ttf",
+            "Arial Bold.ttf",
+        ]
+        if dam
+        else [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "DejaVuSans.ttf",
+            "Arial.ttf",
+        ]
+    )
+    for ten_file in ten_file_uu_tien:
+        try:
+            return ImageFont.truetype(ten_file, kich_thuoc_px)
+        except Exception:
+            continue
+    try:
+        return ImageFont.load_default(size=kich_thuoc_px)
+    except TypeError:
+        # Phien ban Pillow cu khong ho tro tham so size cho load_default.
+        return ImageFont.load_default()
+
+
+def _tinh_ty_le_px_tren_mm(rong_bleed_mm: float, dai_bleed_mm: float) -> float:
+    """Tinh ty le quy doi mm -> px sao cho canh dai nhat vua khung preview.
+
+    Tham so:
+        rong_bleed_mm, dai_bleed_mm: Kich thuoc file thiet ke (da cong
+            bleed), tuc kich thuoc canvas se ve.
+
+    Tra ve:
+        So px tuong ung voi 1mm (luon > 0).
+    """
+    canh_lon_nhat_mm = max(rong_bleed_mm, dai_bleed_mm, 1.0)
+    return DO_DAI_CANH_LON_NHAT_PREVIEW_PX / canh_lon_nhat_mm
+
+
+def _ve_khung_net_dut(
+    ve: ImageDraw.ImageDraw,
+    hop: tuple[float, float, float, float],
+    mau: tuple[int, int, int],
+    do_rong_net: int = 2,
+) -> None:
+    """Ve mot hinh chu nhat vien net dut (khong co san trong Pillow).
+
+    Pillow khong ho tro san kieu net dut cho rectangle, nen ham nay tu
+    ve tung doan thang ngan xen ke khoang trong doc theo 4 canh.
+
+    Tham so:
+        ve: Doi tuong ImageDraw dang thao tac.
+        hop: Toa do (x0, y0, x1, y1) cua hinh chu nhat, don vi px.
+        mau: Mau net dut (R, G, B).
+        do_rong_net: Do day net ve, tinh bang px.
+    """
+    x0, y0, x1, y1 = hop
+    buoc = DO_DAI_NET_DUT_PX + KHOANG_CACH_NET_DUT_PX
+
+    # Canh tren va canh duoi (di chuyen theo truc X).
+    for x_bat_dau in range(int(x0), int(x1), buoc):
+        x_ket_thuc = min(x_bat_dau + DO_DAI_NET_DUT_PX, x1)
+        ve.line([(x_bat_dau, y0), (x_ket_thuc, y0)], fill=mau, width=do_rong_net)
+        ve.line([(x_bat_dau, y1), (x_ket_thuc, y1)], fill=mau, width=do_rong_net)
+
+    # Canh trai va canh phai (di chuyen theo truc Y).
+    for y_bat_dau in range(int(y0), int(y1), buoc):
+        y_ket_thuc = min(y_bat_dau + DO_DAI_NET_DUT_PX, y1)
+        ve.line([(x0, y_bat_dau), (x0, y_ket_thuc)], fill=mau, width=do_rong_net)
+        ve.line([(x1, y_bat_dau), (x1, y_ket_thuc)], fill=mau, width=do_rong_net)
+
+
+def _ve_van_ban_can_giua_co_xuong_dong(
+    ve: ImageDraw.ImageDraw,
+    tam_x_px: float,
+    y_bat_dau_px: float,
+    noi_dung: str,
+    font: ImageFont.FreeTypeFont,
+    mau: tuple[int, int, int],
+    rong_toi_da_px: float,
+) -> float:
+    """Ve van ban can giua, tu dong xuong dong neu vuot be rong cho phep.
+
+    Uoc luong so ky tu toi da tren 1 dong dua tren be rong trung binh
+    cua font (do bang bbox chu "M"), roi dung textwrap de ngat dong -
+    day la uoc luong don gian, du dung cho muc dich preview truc quan
+    (khac voi ban in that se can do chinh xac tung ky tu).
+
+    Tham so:
+        ve: Doi tuong ImageDraw dang thao tac.
+        tam_x_px: Toa do X tam duong ngang can can giua van ban.
+        y_bat_dau_px: Toa do Y bat dau ve dong dau tien.
+        noi_dung: Chuoi van ban can ve (co the chua nhieu tu).
+        font: Font da tao san boi _lay_font().
+        mau: Mau chu (R, G, B).
+        rong_toi_da_px: Be rong toi da cho phep (thuong la be rong
+            vung an toan) de tinh so ky tu/dong.
+
+    Tra ve:
+        Toa do Y ngay duoi dong cuoi cung vua ve (de ve tiep noi dung
+        khac ben duoi ma khong bi de).
+    """
+    if not noi_dung:
+        return y_bat_dau_px
+
+    # Uoc luong be rong 1 ky tu trung binh bang bbox chu "M" (ky tu
+    # rong nhat pho bien) de tinh so ky tu toi da tren 1 dong.
+    bbox_chu_m = ve.textbbox((0, 0), "M", font=font)
+    be_rong_ky_tu_uoc_tinh = max(bbox_chu_m[2] - bbox_chu_m[0], 1)
+    so_ky_tu_toi_da = max(int(rong_toi_da_px / be_rong_ky_tu_uoc_tinh), 1)
+
+    cac_dong: list[str] = []
+    for doan in noi_dung.splitlines():
+        cac_dong.extend(textwrap.wrap(doan, width=so_ky_tu_toi_da) or [""])
+
+    y_hien_tai = y_bat_dau_px
+    for dong in cac_dong:
+        bbox_dong = ve.textbbox((0, 0), dong, font=font)
+        chieu_cao_dong = bbox_dong[3] - bbox_dong[1]
+        ve.text(
+            (tam_x_px, y_hien_tai),
+            dong,
+            font=font,
+            fill=mau,
+            anchor="ma",  # middle-ascender: can giua theo truc X
+        )
+        y_hien_tai += chieu_cao_dong + 4
+
+    return y_hien_tai
+
+
+def _ve_cua_so_trong_suot(
+    canvas: Image.Image,
+    thong_tin: "ThongTinThietKe",
+    goc_trai_tren_px: tuple[float, float],
+    ty_le_px_tren_mm: float,
+) -> Optional[str]:
+    """Ve vung cua so trong suot len canvas mockup (neu co bat tinh nang).
+
+    Neu nguoi dung da tai anh mo phong san pham, anh se duoc cat/resize
+    va ghep vao dung vi tri/hinh dang cua so thong qua mot mask (theo
+    hinh chu nhat bo goc, oval, hoac tron). Neu chua co anh, ve mot
+    vung mau xanh nhat mo phong be mat kinh trong suot.
+
+    Tham so:
+        canvas: Anh nen (mode "RGB") dang duoc ve mockup len.
+        thong_tin: Doi tuong ThongTinThietKe hien tai.
+        goc_trai_tren_px: Toa do (x, y) px cua goc trai-tren thanh
+            pham (tuc vi tri sau khi da tru bleed) tren canvas.
+        ty_le_px_tren_mm: Ty le quy doi mm -> px dang dung cho lan ve.
+
+    Tra ve:
+        Chuoi ghi chu can hien thi them cho nguoi dung (vi du khi cua
+        so o "Toàn bộ mặt sau" khong the ve tren mat truoc), hoac None
+        neu khong co ghi chu nao can them.
+    """
+    cua_so = thong_tin.cua_so_trong_suot
+    if not cua_so.co_cua_so:
+        return None
+
+    if cua_so.vi_tri == "Toàn bộ mặt sau":
+        return (
+            "Cửa sổ trong suốt được cấu hình cho **mặt sau** của túi nên "
+            "không hiển thị trên bản mockup mặt trước này."
+        )
+
+    toa_do_mm = tinh_toa_do_goc_cua_so_mm(
+        cua_so, thong_tin.rong_mm, thong_tin.dai_mm
+    )
+    if toa_do_mm is None:
+        return None
+
+    x0_mm, y0_mm, x1_mm, y1_mm = toa_do_mm
+    # Ep toa do nam trong pham vi tui, phong truong hop nguoi dung nhap
+    # toa do tuy chinh vuot ra ngoai (da co canh bao o Giai doan 2,
+    # nhung mockup van khong duoc phep crash).
+    x0_mm = max(0.0, min(x0_mm, thong_tin.rong_mm))
+    y0_mm = max(0.0, min(y0_mm, thong_tin.dai_mm))
+    x1_mm = max(x0_mm, min(x1_mm, thong_tin.rong_mm))
+    y1_mm = max(y0_mm, min(y1_mm, thong_tin.dai_mm))
+
+    goc_x_px, goc_y_px = goc_trai_tren_px
+    x0_px = goc_x_px + x0_mm * ty_le_px_tren_mm
+    y0_px = goc_y_px + y0_mm * ty_le_px_tren_mm
+    x1_px = goc_x_px + x1_mm * ty_le_px_tren_mm
+    y1_px = goc_y_px + y1_mm * ty_le_px_tren_mm
+    rong_px = max(int(x1_px - x0_px), 1)
+    cao_px = max(int(y1_px - y0_px), 1)
+
+    # Tao mask theo dung hinh dang da chon - dung chung cho ca truong
+    # hop co anh mo phong (paste qua mask) lan truong hop to mau phang.
+    mask = Image.new("L", (rong_px, cao_px), 0)
+    ve_mask = ImageDraw.Draw(mask)
+    if cua_so.hinh_dang == "Chữ nhật bo góc":
+        ban_kinh_bo_goc = max(int(min(rong_px, cao_px) * 0.12), 2)
+        ve_mask.rounded_rectangle(
+            [0, 0, rong_px - 1, cao_px - 1], radius=ban_kinh_bo_goc, fill=255
+        )
+    else:  # "Oval" hoac "Tròn" - ca hai deu ve bang hinh elip vua khung.
+        ve_mask.ellipse([0, 0, rong_px - 1, cao_px - 1], fill=255)
+
+    if cua_so.anh_mo_phong is not None:
+        anh_thu_nho = cua_so.anh_mo_phong.convert("RGB").resize((rong_px, cao_px))
+        canvas.paste(anh_thu_nho, (int(x0_px), int(y0_px)), mask)
+    else:
+        lop_phu = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        ve_lop_phu = ImageDraw.Draw(lop_phu)
+        if cua_so.hinh_dang == "Chữ nhật bo góc":
+            ve_lop_phu.rounded_rectangle(
+                [x0_px, y0_px, x1_px, y1_px],
+                radius=max(int(min(rong_px, cao_px) * 0.12), 2),
+                fill=MAU_NEN_CUA_SO_TRONG,
+            )
+        else:
+            ve_lop_phu.ellipse([x0_px, y0_px, x1_px, y1_px], fill=MAU_NEN_CUA_SO_TRONG)
+        canvas.paste(lop_phu, (0, 0), lop_phu)
+
+    # Ve them duong vien cua so de de nhan biet ranh gioi tren preview.
+    ve_vien = ImageDraw.Draw(canvas)
+    if cua_so.hinh_dang == "Chữ nhật bo góc":
+        ve_vien.rounded_rectangle(
+            [x0_px, y0_px, x1_px, y1_px],
+            radius=max(int(min(rong_px, cao_px) * 0.12), 2),
+            outline=MAU_VIEN_CUA_SO,
+            width=2,
+        )
+    else:
+        ve_vien.ellipse(
+            [x0_px, y0_px, x1_px, y1_px], outline=MAU_VIEN_CUA_SO, width=2
+        )
+
+    return None
+
+
+def ve_mockup_tui(
+    thong_tin: "ThongTinThietKe",
+) -> tuple[Optional[Image.Image], Optional[str]]:
+    """Ve anh mockup truc quan cua thiet ke tui dua tren toan bo thong tin da nhap.
+
+    Day la ham chinh cua Giai doan 3 - tong hop tat ca cac buoc ve:
+    khung bleed/safe margin, logo, ten san pham/slogan, va cua so
+    trong suot - thanh mot anh Pillow duy nhat de hien thi bang
+    st.image() o tang giao dien.
+
+    Tham so:
+        thong_tin: Doi tuong ThongTinThietKe hien tai (da co it nhat
+            kich thuoc Dai/Rong > 0, neu khong ham se tra ve None).
+
+    Tra ve:
+        Tuple (anh_mockup, ghi_chu):
+            anh_mockup: Anh Pillow (mode "RGB") san sang de st.image(),
+                hoac None neu chua du du lieu kich thuoc de ve.
+            ghi_chu: Chuoi ghi chu bo sung can hien thi cho nguoi dung
+                (vi du canh bao ve cua so mat sau), hoac None.
+    """
+    if thong_tin.dai_mm <= 0 or thong_tin.rong_mm <= 0:
+        return None, None
+
+    kich_thuoc_bleed = tinh_kich_thuoc_co_bleed(
+        thong_tin.dai_mm, thong_tin.rong_mm, thong_tin.hong_mm
+    )
+    rong_bleed_mm = kich_thuoc_bleed.rong_co_bleed_mm
+    dai_bleed_mm = kich_thuoc_bleed.dai_co_bleed_mm
+
+    ty_le = _tinh_ty_le_px_tren_mm(rong_bleed_mm, dai_bleed_mm)
+    rong_canvas_px = max(int(round(rong_bleed_mm * ty_le)), 20)
+    dai_canvas_px = max(int(round(dai_bleed_mm * ty_le)), 20)
+
+    canvas = Image.new("RGB", (rong_canvas_px, dai_canvas_px), MAU_NEN_TUI_MOCKUP)
+    ve = ImageDraw.Draw(canvas)
+
+    # Duong bleed nam ngay o mep canvas (canvas = thanh pham + bleed
+    # 2 ben, dung quy uoc file thiet ke thuc te trong nganh in).
+    do_lech_bleed_px = BLEED_MM * ty_le
+    _ve_khung_net_dut(
+        ve,
+        (2, 2, rong_canvas_px - 2, dai_canvas_px - 2),
+        MAU_DUONG_BLEED,
+    )
+
+    # Duong vien thanh pham (duong cat that) - inset dung do_lech_bleed_px.
+    x_tp0, y_tp0 = do_lech_bleed_px, do_lech_bleed_px
+    x_tp1, y_tp1 = rong_canvas_px - do_lech_bleed_px, dai_canvas_px - do_lech_bleed_px
+    ve.rectangle([x_tp0, y_tp0, x_tp1, y_tp1], outline=MAU_VIEN_THANH_PHAM, width=2)
+
+    # Duong safe margin - inset them SAFE_MARGIN_MM tu duong cat.
+    do_lech_safe_px = SAFE_MARGIN_MM * ty_le
+    x_an0 = x_tp0 + do_lech_safe_px
+    y_an0 = y_tp0 + do_lech_safe_px
+    x_an1 = x_tp1 - do_lech_safe_px
+    y_an1 = y_tp1 - do_lech_safe_px
+    if x_an1 > x_an0 and y_an1 > y_an0:
+        _ve_khung_net_dut(ve, (x_an0, y_an0, x_an1, y_an1), MAU_DUONG_SAFE_MARGIN)
+
+    # Cua so trong suot duoc ve TRUOC logo/chu, de logo/chu (thuong o
+    # phia tren cung) khong bao gio bi cua so de len tren.
+    ghi_chu = _ve_cua_so_trong_suot(canvas, thong_tin, (x_tp0, y_tp0), ty_le)
+    ve = ImageDraw.Draw(canvas)  # canvas co the da bi paste de, tao lai Draw.
+
+    y_hien_tai = y_an0 + 8
+    rong_an_toan_px = max(x_an1 - x_an0, 1)
+
+    # Ghep logo (neu co), can giua theo truc ngang, chieu cao toi da
+    # ~18% chieu dai vung an toan de con cho cho ten san pham/slogan.
+    if thong_tin.logo is not None:
+        chieu_cao_logo_toi_da_px = max(int((y_an1 - y_an0) * 0.18), 24)
+        logo = thong_tin.logo.convert("RGBA")
+        ty_le_logo = min(
+            rong_an_toan_px * 0.6 / logo.width, chieu_cao_logo_toi_da_px / logo.height
+        )
+        logo_rong = max(int(logo.width * ty_le_logo), 1)
+        logo_cao = max(int(logo.height * ty_le_logo), 1)
+        logo_resize = logo.resize((logo_rong, logo_cao))
+        x_logo = x_an0 + (rong_an_toan_px - logo_rong) / 2
+        canvas.paste(logo_resize, (int(x_logo), int(y_hien_tai)), logo_resize)
+        y_hien_tai += logo_cao + 10
+
+    tam_x_an_toan = x_an0 + rong_an_toan_px / 2
+
+    # Ten san pham - chu lon, dam, dat ngay duoi logo.
+    if thong_tin.ten_san_pham:
+        co_chu_ten_sp = max(int(dai_canvas_px * 0.05), 14)
+        font_ten_sp = _lay_font(co_chu_ten_sp, dam=True)
+        y_hien_tai = _ve_van_ban_can_giua_co_xuong_dong(
+            ve,
+            tam_x_an_toan,
+            y_hien_tai,
+            thong_tin.ten_san_pham,
+            font_ten_sp,
+            MAU_CHU_TEN_SAN_PHAM,
+            rong_an_toan_px,
+        )
+        y_hien_tai += 6
+
+    # Slogan - chu nho hon, thuong, dat duoi ten san pham.
+    if thong_tin.slogan:
+        co_chu_slogan = max(int(dai_canvas_px * 0.03), 10)
+        font_slogan = _lay_font(co_chu_slogan, dam=False)
+        _ve_van_ban_can_giua_co_xuong_dong(
+            ve,
+            tam_x_an_toan,
+            y_hien_tai,
+            thong_tin.slogan,
+            font_slogan,
+            MAU_CHU_SLOGAN,
+            rong_an_toan_px,
+        )
+
+    return canvas, ghi_chu
 
 
 # ---------------------------------------------------------------------------
@@ -1101,6 +1560,48 @@ def hien_thi_tom_tat(thong_tin: ThongTinThietKe) -> None:
                 )
 
 
+def hien_thi_mockup_preview(thong_tin: "ThongTinThietKe") -> None:
+    """Hien thi anh mockup truc quan (Giai doan 3) va chu thich mau sac.
+
+    Tham so:
+        thong_tin: Doi tuong ThongTinThietKe hien tai.
+    """
+    st.subheader("🖼️ Xem trước thiết kế (Mockup)")
+
+    if thong_tin.dai_mm <= 0 or thong_tin.rong_mm <= 0:
+        st.warning(
+            "⚠️ Chưa nhập đủ kích thước Dài/Rộng nên chưa thể vẽ bản xem "
+            "trước trực quan."
+        )
+        return
+
+    anh_mockup, ghi_chu = ve_mockup_tui(thong_tin)
+    if anh_mockup is None:
+        st.warning("⚠️ Chưa thể tạo bản xem trước với dữ liệu hiện tại.")
+        return
+
+    cot_anh, cot_chu_thich = st.columns([2, 1])
+    with cot_anh:
+        st.image(
+            anh_mockup,
+            caption="Bản xem trước (mô phỏng, chưa phải file in ấn thật)",
+            use_container_width=True,
+        )
+    with cot_chu_thich:
+        st.markdown("**Chú thích:**")
+        st.markdown("🔴 Nét đứt đỏ — đường tràn lề (bleed)")
+        st.markdown("🟦 Viền xanh dương đậm — đường cắt thành phẩm")
+        st.markdown("🟡 Nét đứt vàng cam — vùng an toàn (safe margin)")
+        st.markdown("🔵 Vùng xanh nhạt/ảnh — cửa sổ trong suốt")
+        st.caption(
+            "Vị trí chữ và cửa sổ trong suốt được vẽ đúng tỉ lệ kích "
+            "thước thật đã nhập, dùng để hình dung bố cục sơ bộ."
+        )
+
+    if ghi_chu:
+        st.info(ghi_chu)
+
+
 def hien_thi_kich_thuoc_bleed(thong_tin: "ThongTinThietKe") -> None:
     """Hien thi bang so sanh kich thuoc goc va kich thuoc da cong bleed.
 
@@ -1229,6 +1730,8 @@ def main() -> None:
     if thong_tin_hien_tai is not None:
         st.divider()
         hien_thi_tom_tat(thong_tin_hien_tai)
+        st.divider()
+        hien_thi_mockup_preview(thong_tin_hien_tai)
         st.divider()
         hien_thi_ket_qua_kiem_tra(thong_tin_hien_tai)
 
