@@ -56,12 +56,19 @@ Streamlit Community Cloud.
 from __future__ import annotations
 
 import io
+import os
 import textwrap
 from dataclasses import dataclass, field
 from typing import Optional
 
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
+from reportlab.lib.colors import CMYKColor, Color, HexColor
+from reportlab.lib.units import mm as MM_SANG_POINT
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen import canvas as reportlab_canvas
 
 # ---------------------------------------------------------------------------
 # HANG SO CAU HINH NGHIEP VU
@@ -103,6 +110,67 @@ KICH_THUOC_TOI_DA_MM: float = 2000.0
 # Dinh dang anh duoc chap nhan khi upload logo / anh mo phong san pham.
 DINH_DANG_ANH_HOP_LE: list[str] = ["png", "jpg", "jpeg"]
 
+# ===== FONT UNICODE (HO TRO DAU TIENG VIET) =====
+#
+# Font "Helvetica" tieu chuan cua ReportLab (va font bitmap mac dinh
+# cua Pillow) CHI ho tro bang ma Latin co ban, KHONG co dau tieng
+# Viet (a, o, u, e...) - se hien thi thanh o vuong trong (glyph
+# loi) neu dung truc tiep. De dam bao toan bo van ban tieng Viet
+# (ten san pham, slogan, mã vạch...) hien thi dung tren ca anh
+# preview (Pillow) lan file PDF (ReportLab), ung dung dang ky mot
+# font Unicode day du (DejaVu Sans) tu file .ttf dat CUNG THU MUC
+# voi app.py.
+#
+# QUAN TRONG: can upload kem 2 file "DejaVuSans.ttf" va
+# "DejaVuSans-Bold.ttf" (cung thu muc voi app.py) len GitHub repo khi
+# deploy, neu khong ung dung se tu dong dung font du phong (co the
+# hien sai dau tieng Viet tren file PDF xuat ra - van hoat dong binh
+# thuong, khong crash, nhung se hien canh bao nhac nguoi dung bo sung).
+THU_MUC_UNG_DUNG: str = os.path.dirname(os.path.abspath(__file__))
+DUONG_DAN_FONT_THUONG: str = os.path.join(THU_MUC_UNG_DUNG, "DejaVuSans.ttf")
+DUONG_DAN_FONT_DAM: str = os.path.join(THU_MUC_UNG_DUNG, "DejaVuSans-Bold.ttf")
+
+# Ten font se dung khi ve PDF - mac dinh la Helvetica (luon co san),
+# se duoc doi thanh "DejaVuSans"/"DejaVuSans-Bold" neu dang ky thanh
+# cong o ham _dang_ky_font_unicode_cho_pdf() ben duoi.
+TEN_FONT_PDF_THUONG: str = "Helvetica"
+TEN_FONT_PDF_DAM: str = "Helvetica-Bold"
+FONT_UNICODE_SAN_SANG: bool = False
+
+
+def _dang_ky_font_unicode_cho_pdf() -> bool:
+    """Dang ky font DejaVu Sans (Unicode) voi ReportLab neu tim thay file.
+
+    Ham nay chi chay MOT LAN khi module duoc tai (goi ngay ben duoi
+    dinh nghia ham). Neu khong tim thay file font (nguoi dung chua
+    upload kem file .ttf), ham se khong nem loi ra ngoai - ung dung
+    van chay binh thuong, chi la PDF xuat ra se dung font Helvetica
+    mac dinh (co the sai dau tieng Viet).
+
+    Tra ve:
+        True neu dang ky Unicode font thanh cong, False neu phai dung
+        font du phong (Helvetica).
+    """
+    global TEN_FONT_PDF_THUONG, TEN_FONT_PDF_DAM, FONT_UNICODE_SAN_SANG
+    try:
+        if not (
+            os.path.isfile(DUONG_DAN_FONT_THUONG)
+            and os.path.isfile(DUONG_DAN_FONT_DAM)
+        ):
+            return False
+        pdfmetrics.registerFont(TTFont("DejaVuSans", DUONG_DAN_FONT_THUONG))
+        pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", DUONG_DAN_FONT_DAM))
+        TEN_FONT_PDF_THUONG = "DejaVuSans"
+        TEN_FONT_PDF_DAM = "DejaVuSans-Bold"
+        FONT_UNICODE_SAN_SANG = True
+        return True
+    except Exception:  # noqa: BLE001 - font loi/thieu khong duoc lam crash app
+        FONT_UNICODE_SAN_SANG = False
+        return False
+
+
+FONT_UNICODE_SAN_SANG = _dang_ky_font_unicode_cho_pdf()
+
 # ===== HANG SO NGHIEP VU GIAI DOAN 2 =====
 
 # Do tran le (bleed) chuan cho in ong dong - cong them moi canh.
@@ -142,6 +210,19 @@ DANH_SACH_PANTONE_KHOA: list[str] = [
     "Pantone 877 C (Bạc ánh kim)",
     "Pantone 871 C (Vàng ánh kim)",
 ]
+
+# Ma hex MO PHONG cho tung mau Pantone (chi de hien thi tham khao tren
+# color bar cua PDF - KHONG thay the cho sach mau Pantone that khi
+# pha muc san xuat, vi mau hien thi tren man hinh/may in van phong
+# khong the tai hien chinh xac 100% mau Pantone chuan).
+PANTONE_HEX_MO_PHONG: dict[str, str] = {
+    "Pantone 185 C (Đỏ tươi)": "#E4002B",
+    "Pantone 286 C (Xanh dương đậm)": "#0032A0",
+    "Pantone 355 C (Xanh lá)": "#00843D",
+    "Pantone 116 C (Vàng cam)": "#F2A900",
+    "Pantone 877 C (Bạc ánh kim)": "#8A8D8F",
+    "Pantone 871 C (Vàng ánh kim)": "#85754E",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -700,6 +781,7 @@ def _lay_font(kich_thuoc_px: int, dam: bool = False) -> ImageFont.FreeTypeFont:
     """
     ten_file_uu_tien = (
         [
+            DUONG_DAN_FONT_DAM,
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             "DejaVuSans-Bold.ttf",
@@ -707,6 +789,7 @@ def _lay_font(kich_thuoc_px: int, dam: bool = False) -> ImageFont.FreeTypeFont:
         ]
         if dam
         else [
+            DUONG_DAN_FONT_THUONG,
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "DejaVuSans.ttf",
@@ -891,6 +974,24 @@ def _ve_cua_so_trong_suot(
 
     # Tao mask theo dung hinh dang da chon - dung chung cho ca truong
     # hop co anh mo phong (paste qua mask) lan truong hop to mau phang.
+    #
+    # Luu y rieng cho hinh "Tròn": PHAI ep thanh hinh vuong can giua
+    # (duong kinh = canh ngan hon) truoc khi ve elip, neu khong khi
+    # Rong != Cao thi "Tròn" se bi ve thanh oval giong het lua chon
+    # "Oval" - sai voi y muon cua nguoi dung khi chon rieng "Tròn".
+    def _hop_hinh_tron_can_giua(
+        a0: float, b0: float, a1: float, b1: float
+    ) -> tuple[float, float, float, float]:
+        duong_kinh = min(a1 - a0, b1 - b0)
+        tam_a = (a0 + a1) / 2
+        tam_b = (b0 + b1) / 2
+        return (
+            tam_a - duong_kinh / 2,
+            tam_b - duong_kinh / 2,
+            tam_a + duong_kinh / 2,
+            tam_b + duong_kinh / 2,
+        )
+
     mask = Image.new("L", (rong_px, cao_px), 0)
     ve_mask = ImageDraw.Draw(mask)
     if cua_so.hinh_dang == "Chữ nhật bo góc":
@@ -898,7 +999,11 @@ def _ve_cua_so_trong_suot(
         ve_mask.rounded_rectangle(
             [0, 0, rong_px - 1, cao_px - 1], radius=ban_kinh_bo_goc, fill=255
         )
-    else:  # "Oval" hoac "Tròn" - ca hai deu ve bang hinh elip vua khung.
+    elif cua_so.hinh_dang == "Tròn":
+        ve_mask.ellipse(
+            _hop_hinh_tron_can_giua(0, 0, rong_px - 1, cao_px - 1), fill=255
+        )
+    else:  # "Oval" - ve elip vua khit toan bo khung (khong ep vuong).
         ve_mask.ellipse([0, 0, rong_px - 1, cao_px - 1], fill=255)
 
     if cua_so.anh_mo_phong is not None:
@@ -914,7 +1019,12 @@ def _ve_cua_so_trong_suot(
                 fill=MAU_NEN_CUA_SO_TRONG,
             )
         else:
-            ve_lop_phu.ellipse([x0_px, y0_px, x1_px, y1_px], fill=MAU_NEN_CUA_SO_TRONG)
+            ve_lop_phu.ellipse(
+                _hop_hinh_tron_can_giua(x0_px, y0_px, x1_px, y1_px)
+                if cua_so.hinh_dang == "Tròn"
+                else (x0_px, y0_px, x1_px, y1_px),
+                fill=MAU_NEN_CUA_SO_TRONG,
+            )
         canvas.paste(lop_phu, (0, 0), lop_phu)
 
     # Ve them duong vien cua so de de nhan biet ranh gioi tren preview.
@@ -928,7 +1038,11 @@ def _ve_cua_so_trong_suot(
         )
     else:
         ve_vien.ellipse(
-            [x0_px, y0_px, x1_px, y1_px], outline=MAU_VIEN_CUA_SO, width=2
+            _hop_hinh_tron_can_giua(x0_px, y0_px, x1_px, y1_px)
+            if cua_so.hinh_dang == "Tròn"
+            else (x0_px, y0_px, x1_px, y1_px),
+            outline=MAU_VIEN_CUA_SO,
+            width=2,
         )
 
     return None
@@ -1049,6 +1163,426 @@ def ve_mockup_tui(
         )
 
     return canvas, ghi_chu
+
+
+# ---------------------------------------------------------------------------
+# XUAT FILE PDF KY THUAT IN AN (GIAI DOAN 4)
+# ---------------------------------------------------------------------------
+#
+# File PDF xuat ra khac voi anh preview o cho: preview la anh "mo
+# phong truc quan" (ty le nen, cua so trong suot hien thi that), con
+# PDF la "ban ve ky thuat" theo dung don vi mm that, co them:
+#   - Vung slug (le ngoai bleed) danh rieng cho dau canh (crop marks)
+#     va thanh mau kiem tra (color bar) - khong nam trong vung in
+#     thuc te, chi phuc vu cong doan can chinh may in/khac truc.
+#   - Vung cua so trong suot duoc danh dau ro rang la "KHONG IN"
+#     (khac voi preview la hien thi trong suot that) - dung quy uoc
+#     nganh in de tho van hanh khong nham lan khi tach mau khac truc.
+
+# Do rong vung slug (mm) quanh vung bleed, danh cho crop mark + color bar.
+SLUG_MM: float = 15.0
+
+# Kich thuoc moi o mau tren thanh color bar (mm).
+CO_MAU_COLOR_BAR_MM: float = 8.0
+
+# Do dai crop mark (mm) va khoang cach ho tu mep bleed toi crop mark.
+DO_DAI_CROP_MARK_MM: float = 5.0
+KHOANG_HO_CROP_MARK_MM: float = 1.5
+
+
+def _mau_pdf_tu_rgb(mau_rgb: tuple[int, int, int]):
+    """Quy doi tuple RGB (0-255, dung cho Pillow) sang Color cua ReportLab.
+
+    Cac hang so mau (MAU_NEN_TUI_MOCKUP, MAU_CHU_TEN_SAN_PHAM...) duoc
+    dinh nghia dang tuple RGB de dung chung cho ca Pillow (Giai doan 3)
+    lan ReportLab (Giai doan 4), giup dam bao mockup va PDF dong bo
+    mau sac. Ham nay la lop chuyen doi rieng cho ReportLab.
+
+    Tham so:
+        mau_rgb: Tuple (r, g, b) voi gia tri 0-255.
+
+    Tra ve:
+        Doi tuong Color cua ReportLab (thang do 0.0-1.0).
+    """
+    r, g, b = mau_rgb
+    return Color(r / 255, g / 255, b / 255)
+
+
+def _ve_crop_marks(
+    c: "reportlab_canvas.Canvas",
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+) -> None:
+    """Ve dau canh (crop marks) hinh chu L tai 4 goc vung thanh pham.
+
+    Crop marks la quy uoc chuan trong nganh in - giup tho van hanh
+    may cat biet chinh xac vi tri duong cat thanh pham sau khi in,
+    ma khong can in duong cat truc tiep len san pham that.
+
+    Tham so:
+        c: Doi tuong Canvas cua ReportLab dang ve (don vi point).
+        x0, y0, x1, y1: Toa do (point) hinh chu nhat thanh pham (vung
+            SAU KHI da tru bleed, tuc duong cat that).
+    """
+    do_dai = DO_DAI_CROP_MARK_MM * MM_SANG_POINT
+    ho = KHOANG_HO_CROP_MARK_MM * MM_SANG_POINT
+
+    c.setStrokeColor(HexColor("#000000"))
+    c.setLineWidth(0.5)
+
+    for (goc_x, goc_y, huong_x, huong_y) in [
+        (x0, y0, -1, -1),  # goc duoi-trai
+        (x1, y0, 1, -1),  # goc duoi-phai
+        (x0, y1, -1, 1),  # goc tren-trai
+        (x1, y1, 1, 1),  # goc tren-phai
+    ]:
+        # Net ngang.
+        c.line(
+            goc_x + huong_x * ho,
+            goc_y,
+            goc_x + huong_x * (ho + do_dai),
+            goc_y,
+        )
+        # Net doc.
+        c.line(
+            goc_x,
+            goc_y + huong_y * ho,
+            goc_x,
+            goc_y + huong_y * (ho + do_dai),
+        )
+
+
+def _ve_thanh_mau_kiem_tra(
+    c: "reportlab_canvas.Canvas", x_bat_dau: float, y_bat_dau: float, mau_pantone: str
+) -> None:
+    """Ve thanh mau kiem tra (color bar) gom 4 o CMYK + 1 o Pantone (neu co).
+
+    Thanh mau nay dat trong vung slug (ngoai vung in thanh pham),
+    dung de ky thuat vien doi chieu mau sac thuc te tren ban in thu
+    voi mau chuan, phat hien som neu may in bi lech mau truoc khi
+    chay hang loat.
+
+    Tham so:
+        c: Doi tuong Canvas ReportLab dang ve.
+        x_bat_dau, y_bat_dau: Toa do (point) goc duoi-trai cua thanh mau.
+        mau_pantone: Ten mau Pantone da chon (hoac gia tri "khong dung").
+    """
+    kich_co = CO_MAU_COLOR_BAR_MM * MM_SANG_POINT
+    c.setFont(TEN_FONT_PDF_THUONG, 5.5)
+
+    # 4 o mau tien trinh CMYK - dung dung gia tri he mau in, khong
+    # quy doi qua RGB de dam bao dung ban chat "khoa mau" da cam ket.
+    cac_o_cmyk = [
+        ("C", CMYKColor(1, 0, 0, 0)),
+        ("M", CMYKColor(0, 1, 0, 0)),
+        ("Y", CMYKColor(0, 0, 1, 0)),
+        ("K", CMYKColor(0, 0, 0, 1)),
+    ]
+
+    x_hien_tai = x_bat_dau
+    for nhan, mau in cac_o_cmyk:
+        c.setFillColor(mau)
+        c.rect(x_hien_tai, y_bat_dau, kich_co, kich_co, fill=1, stroke=1)
+        c.setFillColor(HexColor("#000000"))
+        c.drawCentredString(x_hien_tai + kich_co / 2, y_bat_dau - 8, nhan)
+        x_hien_tai += kich_co + 2
+
+    # O mau Pantone (neu nguoi dung co chon) - ve mo phong bang ma hex
+    # tham khao, ghi chu ro day khong phai mau in that.
+    if mau_pantone in PANTONE_HEX_MO_PHONG:
+        c.setFillColor(HexColor(PANTONE_HEX_MO_PHONG[mau_pantone]))
+        c.rect(x_hien_tai, y_bat_dau, kich_co, kich_co, fill=1, stroke=1)
+        c.setFillColor(HexColor("#000000"))
+        c.drawCentredString(x_hien_tai + kich_co / 2, y_bat_dau - 8, "PMS")
+
+
+def _ve_vung_khong_in(
+    c: "reportlab_canvas.Canvas",
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    hinh_dang: str,
+) -> None:
+    """Ve vung "KHONG IN" (NO PRINT ZONE) tai vi tri cua so trong suot.
+
+    Khac voi ban preview (hien thi trong suot that de hinh dung truc
+    quan), file PDF ky thuat BAT BUOC phai danh dau ro vung nay bang
+    net gach cheo + chu ghi chu, de tho khac truc KHONG khac mau vao
+    vung nay (day la vung mang film duoc de trong hoan toan).
+
+    Tham so:
+        c: Doi tuong Canvas ReportLab dang ve.
+        x0, y0, x1, y1: Toa do (point) hinh chu nhat bao quanh cua so.
+        hinh_dang: Hinh dang cua so (chi de tham khao, vung gach cheo
+            van ve theo hinh chu nhat bao ngoai de dam bao ro rang).
+    """
+    c.saveState()
+    duong_path = c.beginPath()
+    duong_path.rect(x0, y0, x1 - x0, y1 - y0)
+    c.clipPath(duong_path, stroke=0, fill=0)
+
+    c.setStrokeColor(HexColor("#DC2626"))
+    c.setLineWidth(0.6)
+    buoc = 6
+    # Ve cac net gach cheo song song phu kin vung chu nhat (da clip
+    # nen phan thua ngoai bien se tu dong bi cat bo).
+    khoang_cach = int((x1 - x0) + (y1 - y0)) + buoc
+    for i in range(0, khoang_cach, buoc):
+        c.line(x0 + i, y0, x0, y0 + i)
+        c.line(x0 + i, y0, x0 + i - (y1 - y0), y1)
+
+    c.restoreState()
+
+    c.setStrokeColor(HexColor("#DC2626"))
+    c.setLineWidth(1)
+    c.rect(x0, y0, x1 - x0, y1 - y0, fill=0, stroke=1)
+
+    c.setFillColor(HexColor("#DC2626"))
+    c.setFont(TEN_FONT_PDF_DAM, 7)
+    tam_x = (x0 + x1) / 2
+    tam_y = (y0 + y1) / 2
+    c.drawCentredString(tam_x, tam_y + 4, "KHÔNG IN")
+    c.drawCentredString(tam_x, tam_y - 6, "NO PRINT ZONE")
+
+
+def tao_pdf_ky_thuat(thong_tin: "ThongTinThietKe") -> Optional[bytes]:
+    """Tao file PDF chuan ky thuat in an tu toan bo thong tin thiet ke.
+
+    File PDF gom:
+        - Vung bleed (nen mau dai dien, canh mep trang tran le).
+        - Duong cat thanh pham (net lien) + duong an toan (net dut).
+        - Logo, ten san pham, slogan, khoi luong, ma vach (dang text
+          + hinh mo phong vach) dat trong vung an toan.
+        - Vung cua so trong suot duoc danh dau "KHONG IN" ro rang.
+        - Crop marks va thanh mau kiem tra (color bar) CMYK/Pantone
+          dat trong vung slug ngoai bleed.
+
+    Tham so:
+        thong_tin: Doi tuong ThongTinThietKe hien tai.
+
+    Tra ve:
+        Du lieu nhi phan (bytes) cua file PDF, hoac None neu chua co
+        du kich thuoc hop le de xuat file.
+    """
+    if thong_tin.dai_mm <= 0 or thong_tin.rong_mm <= 0:
+        return None
+
+    ket_qua_bleed = tinh_kich_thuoc_co_bleed(
+        thong_tin.dai_mm, thong_tin.rong_mm, thong_tin.hong_mm
+    )
+    rong_bleed_mm = ket_qua_bleed.rong_co_bleed_mm
+    dai_bleed_mm = ket_qua_bleed.dai_co_bleed_mm
+
+    # Kich thuoc trang PDF = vung bleed + slug 2 ben (cho crop mark
+    # va color bar), quy doi mm -> point (don vi goc cua ReportLab).
+    rong_trang_pt = (rong_bleed_mm + 2 * SLUG_MM) * MM_SANG_POINT
+    cao_trang_pt = (dai_bleed_mm + 2 * SLUG_MM) * MM_SANG_POINT
+
+    bo_dem = io.BytesIO()
+    c = reportlab_canvas.Canvas(bo_dem, pagesize=(rong_trang_pt, cao_trang_pt))
+    c.setTitle(f"Ban ve ky thuat - {thong_tin.ten_san_pham or 'Thiet ke tui'}")
+
+    # Goc toa do PDF (0,0) o duoi-trai - quy doi cac moc toa do chinh
+    # sang point, tinh tu goc trang (da bao gom slug).
+    goc_bleed_x_pt = SLUG_MM * MM_SANG_POINT
+    goc_bleed_y_pt = SLUG_MM * MM_SANG_POINT
+    rong_bleed_pt = rong_bleed_mm * MM_SANG_POINT
+    dai_bleed_pt = dai_bleed_mm * MM_SANG_POINT
+
+    bleed_px_pt = BLEED_MM * MM_SANG_POINT
+    x_cat0 = goc_bleed_x_pt + bleed_px_pt
+    y_cat0 = goc_bleed_y_pt + bleed_px_pt
+    x_cat1 = goc_bleed_x_pt + rong_bleed_pt - bleed_px_pt
+    y_cat1 = goc_bleed_y_pt + dai_bleed_pt - bleed_px_pt
+
+    le_an_toan_pt = SAFE_MARGIN_MM * MM_SANG_POINT
+    x_an0, y_an0 = x_cat0 + le_an_toan_pt, y_cat0 + le_an_toan_pt
+    x_an1, y_an1 = x_cat1 - le_an_toan_pt, y_cat1 - le_an_toan_pt
+
+    # 1) Nen vung bleed (mau xam nhat dai dien cho mang film chua in).
+    c.setFillColor(_mau_pdf_tu_rgb(MAU_NEN_TUI_MOCKUP))
+    c.rect(
+        goc_bleed_x_pt,
+        goc_bleed_y_pt,
+        rong_bleed_pt,
+        dai_bleed_pt,
+        fill=1,
+        stroke=0,
+    )
+
+    # 2) Vung cua so trong suot - danh dau "KHONG IN" (PDF ky thuat,
+    # khac voi preview hien thi trong suot that). Ve TRUOC noi dung
+    # chinh de logo/chu (neu vo tinh dat de len) van hien ro canh bao.
+    cua_so = thong_tin.cua_so_trong_suot
+    if cua_so.co_cua_so:
+        if cua_so.vi_tri == "Toàn bộ mặt sau":
+            _ve_vung_khong_in(c, x_cat0, y_cat0, x_cat1, y_cat1, cua_so.hinh_dang)
+        else:
+            toa_do_mm = tinh_toa_do_goc_cua_so_mm(
+                cua_so, thong_tin.rong_mm, thong_tin.dai_mm
+            )
+            if toa_do_mm is not None:
+                x0_mm, y0_mm, x1_mm, y1_mm = toa_do_mm
+                # Quy doi mm (goc tren-trai kieu man hinh) sang point
+                # (goc duoi-trai kieu PDF) - truc Y can dao nguoc.
+                x0_pt = x_cat0 + x0_mm * MM_SANG_POINT
+                x1_pt = x_cat0 + x1_mm * MM_SANG_POINT
+                y0_pt = y_cat1 - y1_mm * MM_SANG_POINT
+                y1_pt = y_cat1 - y0_mm * MM_SANG_POINT
+                _ve_vung_khong_in(c, x0_pt, y0_pt, x1_pt, y1_pt, cua_so.hinh_dang)
+
+    # 3) Logo (neu co) - can giua theo truc ngang, dat gan dinh vung an toan.
+    y_hien_tai_pt = y_an1 - 10
+    if thong_tin.logo is not None:
+        rong_logo_toi_da_pt = (x_an1 - x_an0) * 0.35
+        ty_le_logo = rong_logo_toi_da_pt / thong_tin.logo.width
+        rong_logo_pt = thong_tin.logo.width * ty_le_logo
+        cao_logo_pt = thong_tin.logo.height * ty_le_logo
+        x_logo = (x_an0 + x_an1) / 2 - rong_logo_pt / 2
+        c.drawImage(
+            ImageReader(thong_tin.logo),
+            x_logo,
+            y_hien_tai_pt - cao_logo_pt,
+            width=rong_logo_pt,
+            height=cao_logo_pt,
+            mask="auto",
+        )
+        y_hien_tai_pt -= cao_logo_pt + 12
+
+    # 4) Ten san pham + slogan.
+    if thong_tin.ten_san_pham:
+        c.setFillColor(_mau_pdf_tu_rgb(MAU_CHU_TEN_SAN_PHAM))
+        c.setFont(TEN_FONT_PDF_DAM, 16)
+        c.drawCentredString(
+            (x_an0 + x_an1) / 2, y_hien_tai_pt - 14, thong_tin.ten_san_pham
+        )
+        y_hien_tai_pt -= 30
+
+    if thong_tin.slogan:
+        c.setFillColor(_mau_pdf_tu_rgb(MAU_CHU_SLOGAN))
+        c.setFont(TEN_FONT_PDF_THUONG, 9)
+        rong_kha_dung_ky_tu = max(int((x_an1 - x_an0) / 4.5), 10)
+        for dong in textwrap.wrap(thong_tin.slogan, width=rong_kha_dung_ky_tu):
+            c.drawCentredString((x_an0 + x_an1) / 2, y_hien_tai_pt - 10, dong)
+            y_hien_tai_pt -= 12
+
+    # 5) Khoi luong (duoi-trai) va ma vach (duoi-phai) trong vung an toan.
+    c.setFont(TEN_FONT_PDF_THUONG, 8)
+    c.setFillColor(_mau_pdf_tu_rgb(MAU_CHU_SLOGAN))
+    if thong_tin.khoi_luong:
+        c.drawString(x_an0, y_an0 + 4, f"KL: {thong_tin.khoi_luong}")
+    if thong_tin.ma_vach:
+        c.drawRightString(x_an1, y_an0 + 4, f"Mã vạch: {thong_tin.ma_vach}")
+
+    # 6) Duong an toan (net dut, cam) va duong cat thanh pham (net lien, den).
+    c.setStrokeColor(_mau_pdf_tu_rgb(MAU_DUONG_SAFE_MARGIN))
+    c.setDash(3, 2)
+    c.setLineWidth(0.75)
+    c.rect(x_an0, y_an0, x_an1 - x_an0, y_an1 - y_an0, fill=0, stroke=1)
+
+    c.setDash()  # tat net dut, ve net lien binh thuong.
+    c.setStrokeColor(_mau_pdf_tu_rgb(MAU_VIEN_THANH_PHAM))
+    c.setLineWidth(1)
+    c.rect(x_cat0, y_cat0, x_cat1 - x_cat0, y_cat1 - y_cat0, fill=0, stroke=1)
+
+    # 7) Duong bleed (net dut, do) - sat mep vung bleed.
+    c.setStrokeColor(HexColor("#DC2626"))
+    c.setDash(4, 3)
+    c.setLineWidth(1)
+    c.rect(
+        goc_bleed_x_pt,
+        goc_bleed_y_pt,
+        rong_bleed_pt,
+        dai_bleed_pt,
+        fill=0,
+        stroke=1,
+    )
+    c.setDash()
+
+    # 8) Crop marks tai 4 goc vung thanh pham (trong vung slug).
+    _ve_crop_marks(c, x_cat0, y_cat0, x_cat1, y_cat1)
+
+    # 9) Thanh mau kiem tra (color bar) dat o slug phia duoi-trai trang.
+    _ve_thanh_mau_kiem_tra(
+        c, x_bat_dau=8, y_bat_dau=8, mau_pantone=thong_tin.mau_pantone
+    )
+
+    # 10) Khung thong tin ky thuat (ten file, ty le, ngay xuat...) o
+    # slug goc duoi-phai, giup ky thuat vien doi chieu khi khac truc.
+    c.setFont(TEN_FONT_PDF_THUONG, 6)
+    c.setFillColor(HexColor("#374151"))
+    c.drawRightString(
+        rong_trang_pt - 8,
+        8,
+        f"{thong_tin.loai_tui} | {ket_qua_bleed.dai_co_bleed_mm:.0f}×"
+        f"{ket_qua_bleed.rong_co_bleed_mm:.0f}mm (đã bleed) | "
+        f"CMYK + {thong_tin.mau_pantone}",
+    )
+
+    c.showPage()
+    c.save()
+    bo_dem.seek(0)
+    return bo_dem.getvalue()
+
+
+def hien_thi_xuat_pdf(thong_tin: "ThongTinThietKe") -> None:
+    """Hien thi nut xuat file PDF ky thuat in an tren giao dien.
+
+    Tham so:
+        thong_tin: Doi tuong ThongTinThietKe hien tai.
+    """
+    st.subheader("📄 Xuất file PDF chuẩn kỹ thuật in ấn")
+
+    if not FONT_UNICODE_SAN_SANG:
+        st.warning(
+            "⚠️ Chưa tìm thấy file font `DejaVuSans.ttf` và "
+            "`DejaVuSans-Bold.ttf` cùng thư mục với app.py - PDF xuất ra "
+            "có thể hiển thị SAI dấu tiếng Việt. Vui lòng tải 2 file font "
+            "này lên cùng repository GitHub (cùng cấp với app.py) rồi "
+            "deploy lại."
+        )
+
+    if thong_tin.dai_mm <= 0 or thong_tin.rong_mm <= 0:
+        st.warning(
+            "⚠️ Chưa nhập đủ kích thước Dài/Rộng nên chưa thể xuất file PDF."
+        )
+        return
+
+    try:
+        du_lieu_pdf = tao_pdf_ky_thuat(thong_tin)
+    except Exception as loi:  # noqa: BLE001 - khong duoc de app crash khi xuat file
+        st.error(
+            "🚫 Có lỗi xảy ra khi tạo file PDF, vui lòng kiểm tra lại dữ "
+            f"liệu đã nhập (chi tiết lỗi: {loi})."
+        )
+        return
+
+    if du_lieu_pdf is None:
+        st.warning("⚠️ Chưa đủ dữ liệu hợp lệ để xuất file PDF.")
+        return
+
+    st.success(
+        "✅ File PDF đã sẵn sàng - bao gồm vùng bleed, đường an toàn, "
+        "crop marks và thanh màu kiểm tra CMYK/Pantone."
+    )
+    st.download_button(
+        label="⬇️ Tải file PDF kỹ thuật in ấn",
+        data=du_lieu_pdf,
+        file_name=f"prepress_{thong_tin.ten_san_pham or 'thiet_ke'}.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+        type="primary",
+    )
+    st.caption(
+        "📌 File gồm vùng bleed thật theo tỉ lệ mm, crop marks và thanh "
+        "màu kiểm tra CMYK/Pantone nằm ở lề ngoài (vùng slug) - không "
+        "thuộc vùng in thành phẩm. Màu Pantone trên thanh kiểm tra chỉ "
+        "mang tính tham khảo trên màn hình/máy in văn phòng, xưởng in "
+        "cần đối chiếu với sách mã màu Pantone thật khi pha mực sản xuất."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1732,6 +2266,8 @@ def main() -> None:
         hien_thi_tom_tat(thong_tin_hien_tai)
         st.divider()
         hien_thi_mockup_preview(thong_tin_hien_tai)
+        st.divider()
+        hien_thi_xuat_pdf(thong_tin_hien_tai)
         st.divider()
         hien_thi_ket_qua_kiem_tra(thong_tin_hien_tai)
 
