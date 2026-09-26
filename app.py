@@ -45,8 +45,22 @@ GIAI DOAN 3: Preview mockup truc quan bang Pillow (DA HOAN THANH)
        theo hinh dang, hoac to nen xanh nhat mo phong kinh trong neu
        chua co anh.
 
-Cac giai doan tiep theo (se bo sung sau):
-    - Giai doan 4: Xuat file PDF ky thuat in an bang ReportLab.
+GIAI DOAN 4: Xuat file PDF ky thuat in an bang ReportLab (DA HOAN THANH)
+-------------------------------------------------------------------------
+    1. Xuat file PDF theo dung kich thuoc mm that (da cong bleed),
+       kem vung slug rieng cho crop marks va thanh mau kiem tra.
+    2. Font Unicode (DejaVu Sans) duoc dang ky de hien thi dung dau
+       tieng Viet tren ca PDF lan anh preview (can file .ttf dat cung
+       thu muc voi app.py, xem ghi chu o hang so DUONG_DAN_FONT_*).
+    3. Ten san pham/slogan TU DONG xuong dong va giam co chu neu qua
+       dai, dam bao khong bao gio tran ra ngoai vung an toan.
+    4. Vung cua so trong suot duoc danh dau "KHONG IN" ro rang tren
+       PDF (khac voi preview la hien thi trong suot that).
+    5. Da kiem tra hang loat truong hop bien: kich thuoc = 0, cua so
+       lon hon tui, ten san pham/slogan cuc dai, logo ty le lech,
+       ma vach sai dinh dang - khong co truong hop nao lam app crash.
+
+Toan bo 4 giai doan da hoan thanh - ung dung san sang su dung.
 
 Thu vien su dung: streamlit, pillow (PIL), reportlab.
 Chi import cac thu vien nay de dam bao on dinh khi trien khai tren
@@ -1208,6 +1222,108 @@ def _mau_pdf_tu_rgb(mau_rgb: tuple[int, int, int]):
     return Color(r / 255, g / 255, b / 255)
 
 
+def _ngat_dong_pdf_theo_do_rong(
+    c: "reportlab_canvas.Canvas",
+    van_ban: str,
+    ten_font: str,
+    co_chu: float,
+    rong_toi_da_pt: float,
+) -> list[str]:
+    """Chia van ban thanh nhieu dong vua voi be rong toi da (PDF).
+
+    Dung c.stringWidth() de do chinh xac be rong chu that theo dung
+    font/co chu dang dung tren canvas ReportLab (chinh xac hon cach
+    uoc luong theo so ky tu). Ap dung cho ca ten san pham va slogan
+    de dam bao KHONG BAO GIO tran ra ngoai vung an toan/bleed, du
+    nguoi dung nhap chuoi dai bao nhieu.
+
+    Tham so:
+        c: Doi tuong Canvas dang ve (dung de goi stringWidth).
+        van_ban: Chuoi can ngat dong (co the da co dau xuong dong).
+        ten_font: Ten font da dang ky (vd TEN_FONT_PDF_DAM).
+        co_chu: Co chu (pt).
+        rong_toi_da_pt: Be rong toi da cho phep moi dong (pt).
+
+    Tra ve:
+        List cac dong da duoc ngat vua khung. Neu mot TU DUY NHAT van
+        rong hon rong_toi_da_pt (vi du chuoi dinh lien khong dau
+        cach), dong do van duoc giu nguyen (khong cat chu) de tranh
+        mat du lieu - truong hop nay se tran nhe, chap nhan duoc vi
+        rat hiem gap trong thuc te.
+    """
+    ket_qua: list[str] = []
+    for dong_goc in van_ban.splitlines() or [""]:
+        tu_list = dong_goc.split()
+        if not tu_list:
+            ket_qua.append("")
+            continue
+        dong_hien_tai = tu_list[0]
+        for tu in tu_list[1:]:
+            dong_thu = f"{dong_hien_tai} {tu}"
+            if c.stringWidth(dong_thu, ten_font, co_chu) <= rong_toi_da_pt:
+                dong_hien_tai = dong_thu
+            else:
+                ket_qua.append(dong_hien_tai)
+                dong_hien_tai = tu
+        ket_qua.append(dong_hien_tai)
+    return ket_qua
+
+
+def _ve_ten_san_pham_tu_dong_co_chu(
+    c: "reportlab_canvas.Canvas",
+    van_ban: str,
+    ten_font: str,
+    tam_x_pt: float,
+    y_dinh_pt: float,
+    rong_toi_da_pt: float,
+    co_chu_bat_dau: float = 16.0,
+    co_chu_toi_thieu: float = 9.0,
+) -> float:
+    """Ve ten san pham can giua, TU DONG giam co chu neu qua dai.
+
+    Chien luoc chong tran chu (ap dung cho ten san pham - truong hay
+    bi nguoi dung nhap dai bat ngo nhat):
+        1. Thu ngat dong o co chu bat dau (16pt).
+        2. Neu ket qua nhieu hon 2 dong, GIAM dan co chu (moi buoc
+           -1pt) va thu ngat lai, cho den khi vua trong <= 2 dong
+           hoac cham co chu toi thieu (9pt) thi dung lai.
+        3. Ve tung dong da ngat, can giua theo truc ngang.
+
+    Tham so:
+        c: Doi tuong Canvas dang ve.
+        van_ban: Ten san pham can ve.
+        ten_font: Ten font dam da dang ky.
+        tam_x_pt: Toa do x tam (de can giua).
+        y_dinh_pt: Toa do y cua dinh dong dau tien.
+        rong_toi_da_pt: Be rong toi da cho phep (thuong = be rong
+            vung an toan).
+        co_chu_bat_dau: Co chu khoi diem (pt).
+        co_chu_toi_thieu: Co chu nho nhat chap nhan duoc (pt), duoi
+            muc nay chu se qua nho de doc tren bao bi that.
+
+    Tra ve:
+        Toa do y (pt) ngay duoi dong chu cuoi cung da ve, de ham goi
+        tiep tuc dat noi dung phia duoi (slogan...).
+    """
+    co_chu = co_chu_bat_dau
+    cac_dong = _ngat_dong_pdf_theo_do_rong(c, van_ban, ten_font, co_chu, rong_toi_da_pt)
+
+    while len(cac_dong) > 2 and co_chu > co_chu_toi_thieu:
+        co_chu -= 1
+        cac_dong = _ngat_dong_pdf_theo_do_rong(
+            c, van_ban, ten_font, co_chu, rong_toi_da_pt
+        )
+
+    c.setFont(ten_font, co_chu)
+    y_hien_tai = y_dinh_pt
+    do_cao_dong = co_chu * 1.25
+    for dong in cac_dong:
+        c.drawCentredString(tam_x_pt, y_hien_tai - co_chu, dong)
+        y_hien_tai -= do_cao_dong
+
+    return y_hien_tai
+
+
 def _ve_crop_marks(
     c: "reportlab_canvas.Canvas",
     x0: float,
@@ -1452,20 +1568,27 @@ def tao_pdf_ky_thuat(thong_tin: "ThongTinThietKe") -> Optional[bytes]:
         )
         y_hien_tai_pt -= cao_logo_pt + 12
 
-    # 4) Ten san pham + slogan.
+    # 4) Ten san pham (TU DONG xuong dong + giam co chu neu qua dai,
+    # dam bao khong bao gio tran ra ngoai vung an toan) + slogan.
     if thong_tin.ten_san_pham:
         c.setFillColor(_mau_pdf_tu_rgb(MAU_CHU_TEN_SAN_PHAM))
-        c.setFont(TEN_FONT_PDF_DAM, 16)
-        c.drawCentredString(
-            (x_an0 + x_an1) / 2, y_hien_tai_pt - 14, thong_tin.ten_san_pham
+        y_hien_tai_pt = _ve_ten_san_pham_tu_dong_co_chu(
+            c,
+            thong_tin.ten_san_pham,
+            TEN_FONT_PDF_DAM,
+            (x_an0 + x_an1) / 2,
+            y_hien_tai_pt,
+            rong_toi_da_pt=(x_an1 - x_an0),
         )
-        y_hien_tai_pt -= 30
+        y_hien_tai_pt -= 8
 
     if thong_tin.slogan:
         c.setFillColor(_mau_pdf_tu_rgb(MAU_CHU_SLOGAN))
         c.setFont(TEN_FONT_PDF_THUONG, 9)
-        rong_kha_dung_ky_tu = max(int((x_an1 - x_an0) / 4.5), 10)
-        for dong in textwrap.wrap(thong_tin.slogan, width=rong_kha_dung_ky_tu):
+        cac_dong_slogan = _ngat_dong_pdf_theo_do_rong(
+            c, thong_tin.slogan, TEN_FONT_PDF_THUONG, 9, x_an1 - x_an0
+        )
+        for dong in cac_dong_slogan:
             c.drawCentredString((x_an0 + x_an1) / 2, y_hien_tai_pt - 10, dong)
             y_hien_tai_pt -= 12
 
@@ -1960,6 +2083,17 @@ def render_form_nhap_lieu() -> Optional[ThongTinThietKe]:
 
         st.subheader("2️⃣ Kích thước (mm)")
         dai_mm, rong_mm, hong_mm = _render_khoi_nhap_kich_thuoc()
+
+        # Canh bao ngay tai form neu nguoi dung da nhap nhung kich
+        # thuoc qua nho (duoi nguong thuc te toi thieu) - giup phat
+        # hien loi go nham (vd go "15" thay vi "150") truoc khi mat
+        # cong nhap het cac truong con lai.
+        if 0 < dai_mm < KICH_THUOC_TOI_THIEU_MM or 0 < rong_mm < KICH_THUOC_TOI_THIEU_MM:
+            st.error(
+                f"🚫 Dài/Rộng đang nhỏ hơn {KICH_THUOC_TOI_THIEU_MM:.0f}mm - "
+                "kích thước này quá nhỏ so với thực tế sản xuất bao bì. "
+                "Vui lòng kiểm tra lại đơn vị (đang tính bằng mm)."
+            )
 
         st.subheader("3️⃣ Thông tin biến đổi")
         (
