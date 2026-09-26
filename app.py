@@ -1,19 +1,31 @@
 import streamlit as st
-from PIL import Image, ImageDraw
-import io
+from PIL import Image, ImageDraw, ImageFont
+import os
 
-st.set_page_config(page_title="Gravure Prepress V3 - Multi-Bag System", layout="wide")
+st.set_page_config(page_title="Gravure Prepress V4 - Colorful Mockup", layout="wide")
 
-st.title("🖨️ Phần mềm Tự động hóa Chế bản In Ống Đồng (Phiên bản V3 - Đa dạng kiểu túi)")
-st.markdown("Hệ thống tự động điều chỉnh thông số kỹ thuật và bố cục theo từng dạng bao bì thực tế.")
+st.title("🎨 Phần mềm Thiết kế & Mô phỏng Bao bì Màu sắc (Phiên bản V4)")
+st.markdown("Hệ thống tạo maket bao bì trực quan, màu sắc sống động sẵn sàng cho việc kiểm tra mỹ thuật và kỹ thuật.")
 
-# Chia giao diện thành 2 cột
-col_input, col_preview = st.columns([1, 1.5])
+# Hàm tải font an toàn tránh lỗi tiếng Việt
+def get_font(size):
+    font_paths = [
+        "DejaVuSans-Bold.ttf", 
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "arial.ttf"
+    ]
+    for path in font_paths:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except:
+                continue
+    return ImageFont.load_default()
+
+col_input, col_preview = st.columns([1, 1.4])
 
 with col_input:
-    st.subheader("1. Chọn quy cách & Dạng túi")
-    
-    # Bổ sung danh mục các dạng túi thực tế trong in ống đồng
+    st.subheader("1. Tùy chọn Quy cách & Bao bì")
     bag_type = st.selectbox("Chọn dạng túi / Bao bì:", [
         "Túi Lưng Giữa (Center Seal Pouch)", 
         "Túi 3 Biên (3-Side Seal Pouch)", 
@@ -29,77 +41,116 @@ with col_input:
     with col_h:
         height = st.number_input("Chiều cao (mm):", value=110)
         
-    st.subheader("2. Nội dung biến đổi")
-    product_name = st.text_input("Tên sản phẩm (Mặt trước):", "TRÀ NHUẬN GAN")
-    sub_title = st.text_input("Loại sản phẩm:", "Túi lọc")
+    st.subheader("2. Nội dung & Màu sắc thiết kế")
+    product_name = st.text_input("Tên sản phẩm:", "TRÀ NHUẬN GAN")
+    sub_title = st.text_input("Loại sản phẩm:", "Thảo dược thiên nhiên 100%")
+    company_info = st.text_input("Đơn vị sản xuất:", "BỆNH VIỆN ĐẠI HỌC Y DƯỢC TP.HCM")
+    uses_text = st.text_area("Công dụng chính:", "Hỗ trợ thanh nhiệt, giải độc gan, bảo vệ tế bào gan.")
     
-    company_info = st.text_input("Tên công ty / Đơn vị:", "BỆNH VIỆN ĐẠI HỌC Y DƯỢC TP.HCM")
-    uses_text = st.text_area("Công dụng:", "Hỗ trợ điều trị các bệnh viêm gan có vàng da, viêm túi mật, ăn uống kém.")
-    usage_text = st.text_input("Cách dùng:", "Hãm với 200ml nước sôi, bỏ bã")
+    # Chọn chủ đề màu sắc cho bao bì
+    color_theme = st.selectbox("Chủ đề màu sắc chủ đạo:", [
+        "Xanh Lá Thảo Dược (Eco / Trà)", 
+        "Đỏ Vàng Truyền Thống (Dược phẩm)", 
+        "Xanh Dương Công Nghệ (Thực phẩm chức năng)",
+        "Bạc Metalize (PET//AL)"
+    ])
     
     barcode = st.text_input("Mã vạch (Barcode):", "8938500123456")
-    color_code = st.text_input("Mã màu pha / Hệ màu:", "CMYK + 1 Spot Color")
 
 with col_preview:
-    st.subheader(f"3. Maket Kỹ Thuật: {bag_type}")
+    st.subheader(f"3. Maket Trực Quan: {bag_type}")
     
-    # Tạo hình ảnh maket canvas
-    img_w, img_h = 750, 500
-    canvas_img = Image.new("RGB", (img_w, img_h), color=(255, 255, 255))
+    # Kích thước khung vẽ mô phỏng
+    img_w, img_h = 700, 480
+    
+    # Thiết lập màu sắc theo chủ đề
+    if "Xanh Lá" in color_theme:
+        bg_color = (235, 247, 238)      # Xanh nhạt nền
+        primary_color = (20, 100, 40)   # Xanh đậm
+        accent_color = (245, 130, 32)   # Cam điểm nhấn
+        banner_color = (34, 139, 34)    # Xanh lá cây
+    elif "Đỏ Vàng" in color_theme:
+        bg_color = (255, 248, 220)      # Vàng kem
+        primary_color = (180, 20, 20)   # Đỏ đậm
+        accent_color = (218, 165, 32)   # Vàng đồng
+        banner_color = (178, 34, 34)    # Đỏ gạch
+    elif "Xanh Dương" in color_theme:
+        bg_color = (240, 248, 255)      # Xanh băng
+        primary_color = (10, 60, 120)   # Xanh dương đậm
+        accent_color = (255, 140, 0)    # Cam
+        banner_color = (30, 144, 255)   # Xanh dương sáng
+    else:
+        bg_color = (220, 224, 230)      # Xám bạc metalize
+        primary_color = (50, 50, 50)    # Đen/Xám tối
+        accent_color = (0, 102, 204)    # Xanh dương
+        banner_color = (100, 110, 120)  # Xám chì
+
+    # Tạo ảnh canvas màu sắc
+    canvas_img = Image.new("RGB", (img_w, img_h), color=(240, 240, 240))
     draw = ImageDraw.Draw(canvas_img)
     
-    # Vẽ khung tràn lề (Bleed - màu đỏ)
-    bleed_margin = 15
-    draw.rectangle([bleed_margin, bleed_margin, img_w - bleed_margin, img_h - bleed_margin - 80], outline="red", width=2)
+    # Vẽ vùng bao bì chính có màu nền chủ đạo
+    pkg_x1, pkg_y1, pkg_x2, pkg_y2 = 50, 30, img_w - 50, img_h - 100
+    draw.rectangle([pkg_x1, pkg_y1, pkg_x2, pkg_y2], fill=bg_color, outline=primary_color, width=3)
     
-    # Vẽ khung thành phẩm chính (Màu đen)
-    box_x1, box_y1, box_x2, box_y2 = 40, 40, img_w - 40, img_h - 120
-    draw.rectangle([box_x1, box_y1, box_x2, box_y2], outline="black", width=2)
+    # Font chữ
+    font_title = get_font(18)
+    font_sub = get_font(12)
+    font_body = get_font(11)
     
-    # Xử lý hiển thị đường phân chia mặt tùy thuộc vào Dạng túi được chọn
+    # Phân định giao diện theo dạng túi
     if "Túi Lưng Giữa" in bag_type:
-        mid_x = int((box_x1 + box_x2) / 2)
-        # Đường hàn lưng ở giữa
-        for y_line in range(box_y1, box_y2, 10):
-            draw.line([(mid_x, y_line), (mid_x, y_line + 5)], fill="blue", width=1)
-        draw.text((mid_x - 50, box_y1 + 5), "[ Mép dán lưng ]", fill="blue")
+        mid_x = int((pkg_x1 + pkg_x2) / 2)
+        # Vẽ mép dán lưng ở giữa (mờ dạng sọc chấm)
+        for y_line in range(pkg_y1, pkg_y2, 12):
+            draw.line([(mid_x, y_line), (mid_x, y_line + 6)], fill=(150, 150, 150), width=2)
         
-        # Nội dung mặt trước & sau được điều chỉnh né mép dán lưng
-        draw.text((mid_x + 30, box_y1 + 40), "Trà", fill="orange")
-        draw.text((mid_x + 30, box_y1 + 80), product_name, fill="red")
+        # Mặt trước (Bên trái đường hàn lưng)
+        draw.rectangle([pkg_x1 + 10, pkg_y1 + 10, mid_x - 10, pkg_y1 + 50], fill=banner_color)
+        draw.text((pkg_x1 + 20, pkg_y1 + 15), company_info[:35], fill=(255, 255, 255), font=font_sub)
         
-        draw.text((box_x1 + 20, box_y1 + 30), "Công dụng:", fill="brown")
-        draw.text((box_x1 + 20, box_y1 + 55), uses_text[:45] + "...", fill="black")
+        draw.text((pkg_x1 + 20, pkg_y1 + 70), sub_title, fill=accent_color, font=font_sub)
+        draw.text((pkg_x1 + 20, pkg_y1 + 95), product_name, fill=primary_color, font=font_title)
         
-    elif "Túi 3 Biên" in bag_type:
-        # Túi 3 biên thường thiết kế tràn đều, chừa biên hàn 3 cạnh
-        draw.rectangle([box_x1 + 10, box_y1 + 10, box_x2 - 10, box_y2 - 10], outline="gray", width=1)
-        draw.text((box_x1 + 40, box_y1 + 40), product_name, fill="red")
-        draw.text((box_x1 + 40, box_y1 + 80), f"Quy cách: {bag_type}", fill="black")
-        draw.text((box_x1 + 40, box_y1 + 120), f"Công dụng: {uses_text[:50]}...", fill="black")
+        draw.rectangle([pkg_x1 + 15, pkg_y1 + 140, mid_x - 15, pkg_y2 - 20], fill=(255, 255, 255), outline=(200, 200, 200))
+        draw.text((pkg_x1 + 25, pkg_y1 + 150), "CÔNG DỤNG CHÍNH:", fill=primary_color, font=font_sub)
+        draw.text((pkg_x1 + 25, pkg_y1 + 175), uses_text[:50] + "...", fill=(50, 50, 50), font=font_body)
+        
+        # Mặt sau (Bên phải đường hàn lưng)
+        draw.text((mid_x + 20, pkg_y1 + 30), "THÔNG TIN SẢN PHẨM", fill=primary_color, font=font_sub)
+        draw.text((mid_x + 20, pkg_y1 + 70), f"Mã vạch: {barcode}", fill=(50, 50, 50), font=font_body)
+        draw.text((mid_x + 20, pkg_y1 + 100), f"Quy cách: {width}x{height}mm", fill=(50, 50, 50), font=font_body)
+        draw.text((mid_x + 20, pkg_y1 + 130), f"Màng ghép: {film_type}", fill=(50, 50, 50), font=font_body)
         
     else:
-        # Mặc định cho các loại khác
-        mid_x = int((box_x1 + box_x2) / 2)
-        for y_line in range(box_y1, box_y2, 10):
-            draw.line([(mid_x, y_line), (mid_x, y_line + 5)], fill="gray", width=1)
-        draw.text((mid_x + 30, box_y1 + 60), product_name, fill="red")
-        draw.text((box_x1 + 20, box_y1 + 40), f"Thông tin: {uses_text[:40]}...", fill="black")
+        # Giao diện chung cho các loại túi khác (Túi 3 biên, màng cuộn,...)
+        draw.rectangle([pkg_x1, pkg_y1, pkg_x2, pkg_y1 + 60], fill=banner_color)
+        draw.text((pkg_x1 + 20, pkg_y1 + 12), company_info, fill=(255, 255, 255), font=font_sub)
+        draw.text((pkg_x1 + 20, pkg_y1 + 35), sub_title, fill=(240, 240, 240), font=font_body)
+        
+        draw.text((pkg_x1 + 30, pkg_y1 + 80), product_name, fill=primary_color, font=font_title)
+        
+        # Khung chứa nội dung mô tả
+        draw.rectangle([pkg_x1 + 20, pkg_y1 + 120, pkg_x2 - 20, pkg_y2 - 20], fill=(255, 255, 255), outline=(210, 210, 210))
+        draw.text((pkg_x1 + 35, pkg_y1 + 135), f"Công dụng: {uses_text}", fill=(60, 60, 60), font=font_body)
+        draw.text((pkg_x1 + 35, pkg_y1 + 175), f"Barcode chuẩn EAN-13: {barcode}", fill=(60, 60, 60), font=font_body)
+        draw.text((pkg_x1 + 35, pkg_y1 + 210), f"Dạng bao bì: {bag_type} | Vật liệu: {film_type}", fill=accent_color, font=font_body)
 
     # --- BẢNG THÔNG TIN KỸ THUẬT DƯỚI ĐÁY ---
-    table_y = box_y2 + 10
-    draw.rectangle([box_x1, table_y, box_x2, table_y + 60], outline="black", width=1)
-    draw.line([(box_x1 + 180, table_y), (box_x1 + 180, table_y + 60)], fill="black", width=1)
-    draw.line([(box_x1 + 350, table_y), (box_x1 + 350, table_y + 60)], fill="black", width=1)
-    draw.line([(box_x1 + 460, table_y), (box_x1 + 460, table_y + 60)], fill="black", width=1)
-    draw.line([(box_x1 + 570, table_y), (box_x1 + 570, table_y + 60)], fill="black", width=1)
+    table_y = pkg_y2 + 10
+    draw.rectangle([pkg_x1, table_y, pkg_x2, table_y + 50], fill=(255, 255, 255), outline=(100, 100, 100), width=1)
     
-    draw.text((box_x1 + 10, table_y + 10), f"Kích thước: K{height}*B{width}mm", fill="black")
-    draw.text((box_x1 + 10, table_y + 35), f"Loại: {bag_type.split(' ')[0]}", fill="blue")
-    draw.text((box_x1 + 190, table_y + 20), "KHÁCH HÀNG KÝ DUYỆT", fill="gray")
-    draw.text((box_x1 + 360, table_y + 20), "KINH DOANH", fill="gray")
-    draw.text((box_x1 + 480, table_y + 20), "THIẾT KẾ", fill="gray")
+    # Các đường kẻ bảng
+    draw.line([(pkg_x1 + 200, table_y), (pkg_x1 + 200, table_y + 50)], fill=(100, 100, 100), width=1)
+    draw.line([(pkg_x1 + 380, table_y), (pkg_x1 + 380, table_y + 50)], fill=(100, 100, 100), width=1)
+    draw.line([(pkg_x1 + 500, table_y), (pkg_x1 + 500, table_y + 50)], fill=(100, 100, 100), width=1)
+    
+    draw.text((pkg_x1 + 10, table_y + 10), f"Kích thước: {width} x {height} mm", fill=(0, 0, 0), font=font_body)
+    draw.text((pkg_x1 + 10, table_y + 30), f"Loại: {bag_type.split(' ')[0]}", fill=primary_color, font=font_body)
+    draw.text((pkg_x1 + 210, table_y + 18), "KHÁCH HÀNG DUYỆT", fill=(100, 100, 100), font=font_body)
+    draw.text((pkg_x1 + 390, table_y + 18), "KINH DOANH", fill=(100, 100, 100), font=font_body)
+    draw.text((pkg_x1 + 510, table_y + 18), "THIẾT KẾ", fill=(100, 100, 100), font=font_body)
 
-    # Hiển thị maket lên web
-    st.image(canvas_img, caption=f"Mô phỏng maket kỹ thuật cho dạng: {bag_type}", use_container_width=True)
-    st.success(f"⚙️ Đã áp dụng quy chuẩn kỹ thuật dành riêng cho **{bag_type}** thành công!")
+    # Hiển thị ảnh maket màu sắc lên giao diện Streamlit
+    st.image(canvas_img, use_container_width=True)
+    st.success(f"✨ Đã render thành công maket màu sắc trực quan cho dòng sản phẩm **{product_name}**!")
