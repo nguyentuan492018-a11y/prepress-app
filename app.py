@@ -338,6 +338,7 @@ class ThongTinThietKe:
     anh_artwork_truoc: Optional[Image.Image] = None
     anh_artwork_sau: Optional[Image.Image] = None
     cach_dat_anh: str = DANH_SACH_CACH_DAT_ANH[0]
+    anh_da_co_bleed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1292,20 +1293,24 @@ def _ve_khung_net_dut_co_vien_sang(
     _ve_khung_net_dut(ve, hop, mau, do_rong_net=2)
 
 
-def _do_lech_ti_le_artwork(thong_tin: "ThongTinThietKe", anh: Image.Image) -> float:
-    """Tinh do lech ty le (cao/rong) giua artwork va tui (0.05 = lech 5%).
+def _kich_thuoc_tham_chieu_artwork(
+    thong_tin: "ThongTinThietKe",
+) -> tuple[float, float]:
+    """Kich thuoc (dai, rong) mm ma artwork PHAI khop ty le.
 
-    So sanh voi CA kich thuoc thanh pham LAN kich thuoc da cong bleed,
-    lay muc lech nho hon - vi file artwork cua khach co the da co san
-    bleed hoac chua co.
+    Mac dinh artwork = kich thuoc THANH PHAM (nguoi dung nhap), tran le
+    3mm do app CONG THEM ra ngoai. Neu nguoi dung tick "anh da co san
+    tran le" thi artwork = thanh pham + 2 x bleed.
     """
-    r_anh = anh.height / anh.width
-    bleed = tinh_kich_thuoc_co_bleed(
-        thong_tin.dai_mm, thong_tin.rong_mm, thong_tin.hong_mm
-    )
-    r_thanh_pham = thong_tin.dai_mm / thong_tin.rong_mm
-    r_bleed = bleed.dai_co_bleed_mm / bleed.rong_co_bleed_mm
-    return min(abs(r_anh / r_thanh_pham - 1), abs(r_anh / r_bleed - 1))
+    if thong_tin.anh_da_co_bleed:
+        return thong_tin.dai_mm + 2 * BLEED_MM, thong_tin.rong_mm + 2 * BLEED_MM
+    return thong_tin.dai_mm, thong_tin.rong_mm
+
+
+def _do_lech_ti_le_artwork(thong_tin: "ThongTinThietKe", anh: Image.Image) -> float:
+    """Do lech ty le (cao/rong) giua artwork va khung tham chieu (0.05 = 5%)."""
+    dai_tc, rong_tc = _kich_thuoc_tham_chieu_artwork(thong_tin)
+    return abs((anh.height / anh.width) / (dai_tc / rong_tc) - 1)
 
 
 def danh_gia_ti_le_artwork(
@@ -1328,36 +1333,26 @@ def danh_gia_ti_le_artwork(
     if lech <= DUNG_SAI_TI_LE_ARTWORK:
         return None
 
-    dai, rong = thong_tin.dai_mm, thong_tin.rong_mm
+    dai_tc, rong_tc = _kich_thuoc_tham_chieu_artwork(thong_tin)
+    bu = 2 * BLEED_MM if thong_tin.anh_da_co_bleed else 0.0  # doi ve thanh pham
     r_anh = anh.height / anh.width
     dong = [
         f"⚠️ Artwork **{ten_mat}** có tỉ lệ cao/rộng = **{r_anh:.2f}**, "
-        f"nhưng kích thước đã nhập (Dài {dai:.0f} × Rộng {rong:.0f} mm) "
-        f"có tỉ lệ **{dai / rong:.2f}** (lệch {lech * 100:.0f}%)."
+        f"nhưng kích thước đã nhập (Dài {thong_tin.dai_mm:.0f} × Rộng "
+        f"{thong_tin.rong_mm:.0f} mm) tương ứng tỉ lệ **{dai_tc / rong_tc:.2f}** "
+        f"(lệch {lech * 100:.0f}%)."
     ]
-
-    # Kiem tra truong hop nhap nguoc Dai/Rong.
-    lech_dao = min(
-        abs(r_anh / (rong / dai) - 1),
-        abs(
-            r_anh
-            / (
-                (rong + 2 * BLEED_MM) / (dai + 2 * BLEED_MM)
-            )
-            - 1
-        ),
-    )
-    if lech_dao <= DUNG_SAI_TI_LE_ARTWORK:
+    if abs(r_anh / (rong_tc / dai_tc) - 1) <= DUNG_SAI_TI_LE_ARTWORK:
         dong.append(
-            f"👉 Có vẻ bạn **nhập ngược Dài/Rộng**: thử Dài = {rong:.0f}, "
-            f"Rộng = {dai:.0f}. (Trong app: Dài = chiều dọc của ảnh, "
-            "Rộng = chiều ngang của ảnh.)"
+            f"👉 Có vẻ bạn **nhập ngược Dài/Rộng**: thử Dài = {thong_tin.rong_mm:.0f}, "
+            f"Rộng = {thong_tin.dai_mm:.0f}. (Trong app: Dài = chiều dọc của "
+            "ảnh, Rộng = chiều ngang của ảnh.)"
         )
     else:
         dong.append(
-            f"👉 Gợi ý theo tỉ lệ ảnh: giữ Rộng = {rong:.0f} mm thì Dài ≈ "
-            f"**{rong * r_anh:.0f} mm**; hoặc giữ Dài = {dai:.0f} mm thì "
-            f"Rộng ≈ **{dai / r_anh:.0f} mm**."
+            f"👉 Gợi ý theo tỉ lệ ảnh: giữ Rộng = {thong_tin.rong_mm:.0f} mm thì "
+            f"Dài ≈ **{rong_tc * r_anh - bu:.0f} mm**; hoặc giữ Dài = "
+            f"{thong_tin.dai_mm:.0f} mm thì Rộng ≈ **{dai_tc / r_anh - bu:.0f} mm**."
         )
     dong.append(
         "Nếu kích thước đã đúng thực tế, hãy kiểm tra lại file artwork có "
@@ -1403,13 +1398,77 @@ def _dat_anh_vao_khung(
     return nen
 
 
+def _ghep_artwork_co_bleed(
+    thong_tin: "ThongTinThietKe", anh: Image.Image, ty_le: float
+) -> tuple[Image.Image, int, int, int]:
+    """Dat artwork dung KICH THUOC GOC roi CONG THEM vung tran le xung quanh.
+
+    Quy uoc nganh in: artwork cua designer = kich thuoc thanh pham
+    (cat that). Vung tran le 3mm moi canh KHONG lay bot tu artwork ma
+    duoc NOI THEM ra ngoai bang cach phan chieu (mirror) mep anh - giong
+    lenh "bleed extension" khi chuan bi file in. Nhu vay duong cat luon
+    om tron ven ban thiet ke, khong an mat mep nao cua tac pham.
+
+    Neu nguoi dung tick "anh da co san tran le" (anh_da_co_bleed) thi
+    artwork duoc dat kin toan vung bleed nhu file da chuan bi san.
+
+    Tham so:
+        thong_tin: Thong tin thiet ke (Dai/Rong > 0).
+        anh: Artwork (RGB).
+        ty_le: px tren mm dang dung de ve.
+
+    Tra ve:
+        Tuple (canvas, b_px, rong_tp_px, cao_tp_px): canvas gom ca bleed;
+        b_px la do rong tran le (px); rong/cao_tp_px la kich thuoc phan
+        thanh pham (px).
+    """
+    rong_tp = max(int(round(thong_tin.rong_mm * ty_le)), 10)
+    cao_tp = max(int(round(thong_tin.dai_mm * ty_le)), 10)
+    b = max(min(int(round(BLEED_MM * ty_le)), rong_tp // 2, cao_tp // 2), 1)
+    rong_px, cao_px = rong_tp + 2 * b, cao_tp + 2 * b
+    do_lech = _do_lech_ti_le_artwork(thong_tin, anh)
+
+    if thong_tin.anh_da_co_bleed:
+        canvas = _dat_anh_vao_khung(
+            anh, rong_px, cao_px, thong_tin.cach_dat_anh, do_lech
+        )
+        return canvas, b, rong_tp, cao_tp
+
+    tp = _dat_anh_vao_khung(anh, rong_tp, cao_tp, thong_tin.cach_dat_anh, do_lech)
+    canvas = Image.new("RGB", (rong_px, cao_px), (255, 255, 255))
+    canvas.paste(tp, (b, b))
+
+    def xoay_180(im: Image.Image) -> Image.Image:
+        return ImageOps.mirror(ImageOps.flip(im))
+
+    # 4 canh: lat guong dai anh sat mep de nhan ra vung tran le.
+    canvas.paste(ImageOps.flip(tp.crop((0, 0, rong_tp, b))), (b, 0))
+    canvas.paste(
+        ImageOps.flip(tp.crop((0, cao_tp - b, rong_tp, cao_tp))), (b, b + cao_tp)
+    )
+    canvas.paste(ImageOps.mirror(tp.crop((0, 0, b, cao_tp))), (0, b))
+    canvas.paste(
+        ImageOps.mirror(tp.crop((rong_tp - b, 0, rong_tp, cao_tp))), (b + rong_tp, b)
+    )
+    # 4 goc.
+    canvas.paste(xoay_180(tp.crop((0, 0, b, b))), (0, 0))
+    canvas.paste(xoay_180(tp.crop((rong_tp - b, 0, rong_tp, b))), (b + rong_tp, 0))
+    canvas.paste(xoay_180(tp.crop((0, cao_tp - b, b, cao_tp))), (0, b + cao_tp))
+    canvas.paste(
+        xoay_180(tp.crop((rong_tp - b, cao_tp - b, rong_tp, cao_tp))),
+        (b + rong_tp, b + cao_tp),
+    )
+    return canvas, b, rong_tp, cao_tp
+
+
 def ve_mockup_artwork(
     thong_tin: "ThongTinThietKe", mat: str = "truoc"
 ) -> tuple[Optional[Image.Image], Optional[str]]:
     """Ve preview tren ARTWORK THAT kem lop kiem tra ky thuat (V2).
 
     Cac buoc:
-        1. Phu kin artwork len toan vung bleed (canvas).
+        1. Dat artwork dung kich thuoc thanh pham, CONG THEM tran le 3mm
+           moi canh ra ngoai (xem _ghep_artwork_co_bleed).
         2. Ve duong bleed (do), duong cat (xanh dam), vung an toan (cam).
         3. Danh dau cua so trong suot (neu co) bang vien net dut xanh -
            chi vien, KHONG to nen, de van thay artwork ben duoi.
@@ -1435,29 +1494,20 @@ def ve_mockup_artwork(
     ty_le = _tinh_ty_le_px_tren_mm(
         kich_thuoc_bleed.rong_co_bleed_mm, kich_thuoc_bleed.dai_co_bleed_mm
     )
-    rong_px = max(int(round(kich_thuoc_bleed.rong_co_bleed_mm * ty_le)), 20)
-    cao_px = max(int(round(kich_thuoc_bleed.dai_co_bleed_mm * ty_le)), 20)
-
-    canvas = _dat_anh_vao_khung(
-        anh_artwork,
-        rong_px,
-        cao_px,
-        thong_tin.cach_dat_anh,
-        _do_lech_ti_le_artwork(thong_tin, anh_artwork),
-    )
+    canvas, b, rong_tp, cao_tp = _ghep_artwork_co_bleed(thong_tin, anh_artwork, ty_le)
+    rong_px, cao_px = canvas.size
     ve = ImageDraw.Draw(canvas)
 
-    le_bleed_px = BLEED_MM * ty_le
-    x0, y0 = le_bleed_px, le_bleed_px
-    x1, y1 = rong_px - le_bleed_px, cao_px - le_bleed_px
+    # Vung thanh pham nam giua canvas, cach moi mep dung b px (= bleed).
+    x0, y0, x1, y1 = b, b, b + rong_tp, b + cao_tp
+    ty_le_thuc = rong_tp / thong_tin.rong_mm  # px/mm thuc te sau lam tron
 
-    # Duong bleed (sat mep canvas), duong cat, vung an toan.
     _ve_khung_net_dut_co_vien_sang(
         ve, (2, 2, rong_px - 2, cao_px - 2), MAU_DUONG_BLEED
     )
     ve.rectangle([x0 - 1, y0 - 1, x1 + 1, y1 + 1], outline=(255, 255, 255), width=4)
     ve.rectangle([x0, y0, x1, y1], outline=MAU_VIEN_THANH_PHAM, width=2)
-    le_an_toan_px = SAFE_MARGIN_MM * ty_le
+    le_an_toan_px = SAFE_MARGIN_MM * ty_le_thuc
     if x1 - x0 > 2 * le_an_toan_px and y1 - y0 > 2 * le_an_toan_px:
         _ve_khung_net_dut_co_vien_sang(
             ve,
@@ -1470,7 +1520,6 @@ def ve_mockup_artwork(
             MAU_DUONG_SAFE_MARGIN,
         )
 
-    # Cua so trong suot: chi danh dau vien, dung mat tuong ung.
     ghi_chu: Optional[str] = None
     cua_so = thong_tin.cua_so_trong_suot
     if cua_so.co_cua_so:
@@ -1493,10 +1542,10 @@ def ve_mockup_artwork(
                 _ve_khung_net_dut_co_vien_sang(
                     ve,
                     (
-                        x0 + cx0 * ty_le,
-                        y0 + cy0 * ty_le,
-                        x0 + cx1 * ty_le,
-                        y0 + cy1 * ty_le,
+                        x0 + cx0 * ty_le_thuc,
+                        y0 + cy0 * ty_le_thuc,
+                        x0 + cx1 * ty_le_thuc,
+                        y0 + cy1 * ty_le_thuc,
                     ),
                     MAU_VIEN_CUA_SO,
                 )
@@ -2466,6 +2515,16 @@ def render_form_nhap_lieu() -> Optional[ThongTinThietKe]:
             "nội dung). 'Phủ kín' sẽ cắt phần thừa ở mép ảnh.",
             key="radio_cach_dat_anh",
         )
+    anh_da_co_bleed = False
+    if che_do_hien_thi == CHE_DO_ARTWORK:
+        anh_da_co_bleed = st.checkbox(
+            "Artwork của khách ĐÃ CÓ SẴN phần tràn lề (bleed)",
+            value=False,
+            help="Mặc định (không tick): artwork = kích thước thành phẩm, "
+            f"app tự CỘNG THÊM {BLEED_MM:.0f}mm tràn lề mỗi cạnh ra ngoài. "
+            "Chỉ tick nếu file đã được designer làm dư ra ngoài đường cắt.",
+            key="chk_anh_da_co_bleed",
+        )
     co_cua_so = st.checkbox(
         "🔲 Có cửa sổ trong suốt (nhìn xuyên thấy sản phẩm bên trong)",
         key="chk_co_cua_so",
@@ -2558,6 +2617,7 @@ def render_form_nhap_lieu() -> Optional[ThongTinThietKe]:
         anh_artwork_truoc=anh_artwork_truoc,
         anh_artwork_sau=anh_artwork_sau,
         cach_dat_anh=cach_dat_anh,
+        anh_da_co_bleed=anh_da_co_bleed,
     )
     return thong_tin_thiet_ke
 
@@ -2738,8 +2798,13 @@ def hien_thi_mockup_preview(thong_tin: "ThongTinThietKe") -> None:
         if che_do_artwork:
             st.markdown("🔵 Viền xanh nét đứt — vị trí cửa sổ trong suốt")
             st.caption(
-                f"Cách đặt ảnh: {thong_tin.cach_dat_anh}. Nội dung chữ/logo "
-                "lấy từ chính artwork."
+                f"Cách đặt ảnh: {thong_tin.cach_dat_anh}. "
+                + (
+                    "Artwork đã gồm sẵn tràn lề."
+                    if thong_tin.anh_da_co_bleed
+                    else f"Artwork = kích thước thành phẩm; {BLEED_MM:.0f}mm "
+                    "tràn lề được app CỘNG THÊM ra ngoài (phản chiếu mép ảnh)."
+                )
             )
         else:
             st.markdown("🔵 Vùng xanh nhạt/ảnh — cửa sổ trong suốt")
