@@ -144,6 +144,20 @@ CHE_DO_ARTWORK: str = DANH_SACH_CHE_DO_HIEN_THI[1]
 # trong anh.info["kich_thuoc_goc"] de dung cho canh bao DPI (V2-3).
 CANH_TOI_DA_ARTWORK_PX: int = 4000
 
+# Cach dat anh artwork vao khung (vung bleed) khi ty le anh va ty le tui
+# khong khop. "Tu dong" la mac dinh: lech nho -> keo gian nhe cho vua
+# khung (khong cat), lech lon -> giu ty le, KHONG cat, chua nen trang.
+DANH_SACH_CACH_DAT_ANH: list[str] = [
+    "Tự động (khuyên dùng)",
+    "Phủ kín khung (cắt phần thừa)",
+    "Kéo giãn đúng kích thước túi",
+    "Vừa khung, giữ tỉ lệ (chừa nền trắng)",
+]
+
+# Do lech ty le (cao/rong) toi da van coi la "khop" (6% ~ chenh lech do
+# thanh pham co/khong co 3mm bleed moi canh o tui nho).
+DUNG_SAI_TI_LE_ARTWORK: float = 0.06
+
 # Gioi han kich thuoc hop ly cho tui (mm) - dung de canh bao vuot han muc.
 KICH_THUOC_TOI_THIEU_MM: float = 10.0
 KICH_THUOC_TOI_DA_MM: float = 2000.0
@@ -323,6 +337,7 @@ class ThongTinThietKe:
     che_do_hien_thi: str = "Tự vẽ maket cơ bản"
     anh_artwork_truoc: Optional[Image.Image] = None
     anh_artwork_sau: Optional[Image.Image] = None
+    cach_dat_anh: str = DANH_SACH_CACH_DAT_ANH[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1277,6 +1292,117 @@ def _ve_khung_net_dut_co_vien_sang(
     _ve_khung_net_dut(ve, hop, mau, do_rong_net=2)
 
 
+def _do_lech_ti_le_artwork(thong_tin: "ThongTinThietKe", anh: Image.Image) -> float:
+    """Tinh do lech ty le (cao/rong) giua artwork va tui (0.05 = lech 5%).
+
+    So sanh voi CA kich thuoc thanh pham LAN kich thuoc da cong bleed,
+    lay muc lech nho hon - vi file artwork cua khach co the da co san
+    bleed hoac chua co.
+    """
+    r_anh = anh.height / anh.width
+    bleed = tinh_kich_thuoc_co_bleed(
+        thong_tin.dai_mm, thong_tin.rong_mm, thong_tin.hong_mm
+    )
+    r_thanh_pham = thong_tin.dai_mm / thong_tin.rong_mm
+    r_bleed = bleed.dai_co_bleed_mm / bleed.rong_co_bleed_mm
+    return min(abs(r_anh / r_thanh_pham - 1), abs(r_anh / r_bleed - 1))
+
+
+def danh_gia_ti_le_artwork(
+    thong_tin: "ThongTinThietKe", anh: Optional[Image.Image], ten_mat: str
+) -> Optional[str]:
+    """Kiem tra artwork co dung ty le voi kich thuoc tui da nhap khong.
+
+    Tham so:
+        thong_tin: Thong tin thiet ke (can co Dai/Rong > 0).
+        anh: Artwork cua mat can kiem tra (None -> bo qua).
+        ten_mat: "mặt trước" hoac "mặt sau" (de ghi vao thong bao).
+
+    Tra ve:
+        Chuoi canh bao (markdown) kem goi y kich thuoc dung, hoac None
+        neu ty le khop (trong dung sai DUNG_SAI_TI_LE_ARTWORK).
+    """
+    if anh is None or thong_tin.dai_mm <= 0 or thong_tin.rong_mm <= 0:
+        return None
+    lech = _do_lech_ti_le_artwork(thong_tin, anh)
+    if lech <= DUNG_SAI_TI_LE_ARTWORK:
+        return None
+
+    dai, rong = thong_tin.dai_mm, thong_tin.rong_mm
+    r_anh = anh.height / anh.width
+    dong = [
+        f"⚠️ Artwork **{ten_mat}** có tỉ lệ cao/rộng = **{r_anh:.2f}**, "
+        f"nhưng kích thước đã nhập (Dài {dai:.0f} × Rộng {rong:.0f} mm) "
+        f"có tỉ lệ **{dai / rong:.2f}** (lệch {lech * 100:.0f}%)."
+    ]
+
+    # Kiem tra truong hop nhap nguoc Dai/Rong.
+    lech_dao = min(
+        abs(r_anh / (rong / dai) - 1),
+        abs(
+            r_anh
+            / (
+                (rong + 2 * BLEED_MM) / (dai + 2 * BLEED_MM)
+            )
+            - 1
+        ),
+    )
+    if lech_dao <= DUNG_SAI_TI_LE_ARTWORK:
+        dong.append(
+            f"👉 Có vẻ bạn **nhập ngược Dài/Rộng**: thử Dài = {rong:.0f}, "
+            f"Rộng = {dai:.0f}. (Trong app: Dài = chiều dọc của ảnh, "
+            "Rộng = chiều ngang của ảnh.)"
+        )
+    else:
+        dong.append(
+            f"👉 Gợi ý theo tỉ lệ ảnh: giữ Rộng = {rong:.0f} mm thì Dài ≈ "
+            f"**{rong * r_anh:.0f} mm**; hoặc giữ Dài = {dai:.0f} mm thì "
+            f"Rộng ≈ **{dai / r_anh:.0f} mm**."
+        )
+    dong.append(
+        "Nếu kích thước đã đúng thực tế, hãy kiểm tra lại file artwork có "
+        "bị cắt/thêm lề trắng khi xuất không."
+    )
+    return "\n\n".join(dong)
+
+
+def _dat_anh_vao_khung(
+    anh: Image.Image,
+    rong_px: int,
+    cao_px: int,
+    cach: str,
+    do_lech: float,
+) -> Image.Image:
+    """Dat artwork vao khung theo cach nguoi dung chon (khong cat ngam).
+
+    Tham so:
+        anh: Artwork (RGB).
+        rong_px, cao_px: Kich thuoc khung dich (px).
+        cach: Mot trong DANH_SACH_CACH_DAT_ANH.
+        do_lech: Do lech ty le da tinh (dung cho che do tu dong).
+    """
+    if cach == DANH_SACH_CACH_DAT_ANH[0]:  # Tu dong
+        cach = (
+            DANH_SACH_CACH_DAT_ANH[2]
+            if do_lech <= DUNG_SAI_TI_LE_ARTWORK
+            else DANH_SACH_CACH_DAT_ANH[3]
+        )
+    if cach == DANH_SACH_CACH_DAT_ANH[1]:  # Phu kin (cat)
+        return _phu_kin_anh_theo_khung(anh, rong_px, cao_px)
+    if cach == DANH_SACH_CACH_DAT_ANH[2]:  # Keo gian
+        return anh.resize((rong_px, cao_px), Image.LANCZOS)
+    # Vua khung, giu ty le, chua nen trang.
+    ty_le = min(rong_px / anh.width, cao_px / anh.height)
+    rong_moi = max(int(round(anh.width * ty_le)), 1)
+    cao_moi = max(int(round(anh.height * ty_le)), 1)
+    nen = Image.new("RGB", (rong_px, cao_px), (255, 255, 255))
+    nen.paste(
+        anh.resize((rong_moi, cao_moi), Image.LANCZOS),
+        ((rong_px - rong_moi) // 2, (cao_px - cao_moi) // 2),
+    )
+    return nen
+
+
 def ve_mockup_artwork(
     thong_tin: "ThongTinThietKe", mat: str = "truoc"
 ) -> tuple[Optional[Image.Image], Optional[str]]:
@@ -1312,7 +1438,13 @@ def ve_mockup_artwork(
     rong_px = max(int(round(kich_thuoc_bleed.rong_co_bleed_mm * ty_le)), 20)
     cao_px = max(int(round(kich_thuoc_bleed.dai_co_bleed_mm * ty_le)), 20)
 
-    canvas = _phu_kin_anh_theo_khung(anh_artwork, rong_px, cao_px)
+    canvas = _dat_anh_vao_khung(
+        anh_artwork,
+        rong_px,
+        cao_px,
+        thong_tin.cach_dat_anh,
+        _do_lech_ti_le_artwork(thong_tin, anh_artwork),
+    )
     ve = ImageDraw.Draw(canvas)
 
     le_bleed_px = BLEED_MM * ty_le
@@ -2324,6 +2456,16 @@ def render_form_nhap_lieu() -> Optional[ThongTinThietKe]:
         "hoàn chỉnh của khách, app chỉ phủ lớp kiểm tra kỹ thuật lên trên.",
         key="radio_che_do_hien_thi",
     )
+    cach_dat_anh = DANH_SACH_CACH_DAT_ANH[0]
+    if che_do_hien_thi == CHE_DO_ARTWORK:
+        cach_dat_anh = st.radio(
+            "Cách đặt ảnh artwork vào khung túi",
+            options=DANH_SACH_CACH_DAT_ANH,
+            help="Tự động: tỉ lệ ảnh gần khớp túi thì kéo giãn nhẹ cho vừa "
+            "khung, lệch nhiều thì giữ tỉ lệ và chừa nền trắng (KHÔNG cắt "
+            "nội dung). 'Phủ kín' sẽ cắt phần thừa ở mép ảnh.",
+            key="radio_cach_dat_anh",
+        )
     co_cua_so = st.checkbox(
         "🔲 Có cửa sổ trong suốt (nhìn xuyên thấy sản phẩm bên trong)",
         key="chk_co_cua_so",
@@ -2415,6 +2557,7 @@ def render_form_nhap_lieu() -> Optional[ThongTinThietKe]:
         che_do_hien_thi=che_do_hien_thi,
         anh_artwork_truoc=anh_artwork_truoc,
         anh_artwork_sau=anh_artwork_sau,
+        cach_dat_anh=cach_dat_anh,
     )
     return thong_tin_thiet_ke
 
@@ -2542,6 +2685,15 @@ def hien_thi_mockup_preview(thong_tin: "ThongTinThietKe") -> None:
         )
         return
 
+    if che_do_artwork:
+        for anh_kt, ten_mat in (
+            (thong_tin.anh_artwork_truoc, "mặt trước"),
+            (thong_tin.anh_artwork_sau, "mặt sau"),
+        ):
+            canh_bao_ti_le = danh_gia_ti_le_artwork(thong_tin, anh_kt, ten_mat)
+            if canh_bao_ti_le:
+                st.warning(canh_bao_ti_le)
+
     anh_mockup, ghi_chu = ve_mockup_tui(thong_tin)
     if anh_mockup is None:
         st.warning("⚠️ Chưa thể tạo bản xem trước với dữ liệu hiện tại.")
@@ -2586,8 +2738,8 @@ def hien_thi_mockup_preview(thong_tin: "ThongTinThietKe") -> None:
         if che_do_artwork:
             st.markdown("🔵 Viền xanh nét đứt — vị trí cửa sổ trong suốt")
             st.caption(
-                "Ảnh artwork được phóng để phủ kín vùng bleed (giữ tỉ lệ, "
-                "cắt phần thừa). Nội dung chữ/logo lấy từ chính artwork."
+                f"Cách đặt ảnh: {thong_tin.cach_dat_anh}. Nội dung chữ/logo "
+                "lấy từ chính artwork."
             )
         else:
             st.markdown("🔵 Vùng xanh nhạt/ảnh — cửa sổ trong suốt")
